@@ -24,5 +24,6 @@ python -m vllm.entrypoints.openai.api_server \
     --max-model-len 8192 \
     --enable-chunked-prefill \
     --quantization fp8 \
+    --max-num-seqs 512 \
     --chat-template chat_template.jinja \
     --port ${PORT:-8000}
