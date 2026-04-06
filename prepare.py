@@ -1,389 +1,460 @@
 """
-One-time data preparation for autoresearch experiments.
-Downloads data shards and trains a BPE tokenizer.
-
-Usage:
-    python prepare.py                  # full prep (download + tokenizer)
-    python prepare.py --num-shards 8   # download only 8 shards (for testing)
-
-Data and tokenizer are stored in ~/.cache/autoresearch/.
+Read-only experiment harness. Do not modify — the agent edits serve.sh only.
+Usage: uv run prepare.py
 """
+import os, sys, time, signal, hashlib, json, shutil, socket, subprocess
+import yaml, requests
 
-import os
-import sys
-import time
-import math
-import argparse
-import pickle
-from multiprocessing import Pool
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "user_config.yaml")
+SERVE_SCRIPT = os.path.join(BASE_DIR, "serve.sh")
+BENCHMARK_SCRIPT = os.path.join(BASE_DIR, "benchmark.py")
+SERVER_LOG = os.path.join(BASE_DIR, "server.log")
+EXPERIMENTS_DIR = os.path.join(BASE_DIR, "experiments")
 
-import requests
-import pyarrow.parquet as pq
-import rustbpe
-import tiktoken
-import torch
 
-# ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
-# ---------------------------------------------------------------------------
+def load_config():
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+    for key in ("model", "hardware", "server", "optimization", "experiment"):
+        assert key in config, f"missing '{key}' in user_config.yaml"
+    opt = config["optimization"]
+    assert "primary_metric" in opt, "optimization.primary_metric is required"
+    assert opt.get("direction") in ("maximize", "minimize"), "direction must be maximize/minimize"
+    return config
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
+def start_server(port):
+    log_file = open(SERVER_LOG, "w")
+    return subprocess.Popen(
+        ["bash", SERVE_SCRIPT],
+        env={**os.environ, "PORT": str(port)},
+        stdout=log_file, stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
-DATA_DIR = os.path.join(CACHE_DIR, "data")
-TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
 
-# BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
-SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
-
-# ---------------------------------------------------------------------------
-# Data download
-# ---------------------------------------------------------------------------
-
-def download_single_shard(index):
-    """Download one parquet shard with retries. Returns True on success."""
-    filename = f"shard_{index:05d}.parquet"
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        return True
-
-    url = f"{BASE_URL}/{filename}"
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
+def wait_for_ready(health_url, timeout, proc):
+    start, delay = time.time(), 0.5
+    while time.time() - start < timeout:
+        if proc.poll() is not None:
+            return False
         try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.rename(temp_path, filepath)
-            print(f"  Downloaded {filename}")
-            return True
-        except (requests.RequestException, IOError) as e:
-            print(f"  Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            for path in [filepath + ".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-            if attempt < max_attempts:
-                time.sleep(2 ** attempt)
+            if requests.get(health_url, timeout=5).status_code == 200:
+                return True
+        except (requests.ConnectionError, requests.Timeout):
+            pass
+        time.sleep(delay)
+        delay = min(delay * 1.5, 10.0)
     return False
 
 
-def download_data(num_shards, download_workers=8):
-    """Download training shards + pinned validation shard."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    num_train = min(num_shards, MAX_SHARD)
-    ids = list(range(num_train))
-    if VAL_SHARD not in ids:
-        ids.append(VAL_SHARD)
-
-    # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
-    if existing == len(ids):
-        print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
+def stop_server(proc):
+    """Kill only the server process group that WE started. Never kills other processes."""
+    if proc.poll() is not None:
         return
-
-    needed = len(ids) - existing
-    print(f"Data: downloading {needed} shards ({existing} already exist)...")
-
-    workers = max(1, min(download_workers, needed))
-    with Pool(processes=workers) as pool:
-        results = pool.map(download_single_shard, ids)
-
-    ok = sum(1 for r in results if r)
-    print(f"Data: {ok}/{len(ids)} shards ready at {DATA_DIR}")
-
-# ---------------------------------------------------------------------------
-# Tokenizer training
-# ---------------------------------------------------------------------------
-
-def list_parquet_files():
-    """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
-    return [os.path.join(DATA_DIR, f) for f in files]
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        proc.wait(timeout=5)
 
 
-def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
-    """Yield documents from training split (all shards except pinned val shard)."""
-    parquet_paths = [p for p in list_parquet_files() if not p.endswith(VAL_FILENAME)]
-    nchars = 0
-    for filepath in parquet_paths:
-        pf = pq.ParquetFile(filepath)
-        for rg_idx in range(pf.num_row_groups):
-            rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
+def wait_for_port_free(port, timeout=30):
+    start = time.time()
+    while time.time() - start < timeout:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if s.connect_ex(("localhost", port)) != 0:
+                return True
+        finally:
+            s.close()
+        time.sleep(1)
+    return False
 
 
-def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
-    token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+def is_port_in_use(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        return s.connect_ex(("localhost", port)) == 0
+    finally:
+        s.close()
 
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
-        print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
-        return
 
-    os.makedirs(TOKENIZER_DIR, exist_ok=True)
+def find_free_port(start_port, max_attempts=20):
+    """Find a free port starting from start_port. Returns (port, was_moved)."""
+    for offset in range(max_attempts):
+        port = start_port + offset
+        if not is_port_in_use(port):
+            return port, offset > 0
+    return None, False
 
-    parquet_files = list_parquet_files()
-    if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
-        sys.exit(1)
 
-    # --- Train with rustbpe ---
-    print("Tokenizer: training BPE tokenizer...")
-    t0 = time.time()
+def get_required_gpus():
+    """Parse CUDA_VISIBLE_DEVICES from serve.sh to know which GPUs we actually need."""
+    try:
+        content = open(SERVE_SCRIPT).read()
+        for line in content.split("\n"):
+            line = line.strip()
+            if line.startswith("export CUDA_VISIBLE_DEVICES=") or line.startswith("CUDA_VISIBLE_DEVICES="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                return set(val.split(","))
+    except Exception:
+        pass
+    return None  # check all GPUs if not specified
 
-    tokenizer = rustbpe.Tokenizer()
-    vocab_size_no_special = VOCAB_SIZE - len(SPECIAL_TOKENS)
-    tokenizer.train_from_iterator(text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN)
 
-    # Build tiktoken encoding from trained merges
-    pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
-    tokens_offset = len(mergeable_ranks)
-    special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
-    enc = tiktoken.Encoding(
-        name="rustbpe",
-        pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
-        special_tokens=special_tokens,
+def check_gpu_availability():
+    """Check if GPUs are available. Only checks GPUs required by serve.sh."""
+    try:
+        required = get_required_gpus()
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if not out:
+            return True, "nvidia-smi returned no data"
+
+        busy_gpus = []
+        for line in out.split("\n"):
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) >= 4:
+                idx, mem_used, mem_total, util = parts[0], float(parts[1]), float(parts[2]), float(parts[3])
+                if required and idx not in required:
+                    continue  # skip GPUs not needed by serve.sh
+                if mem_used / mem_total > 0.20 or util > 10:
+                    busy_gpus.append(f"GPU {idx}: {mem_used:.0f}/{mem_total:.0f} MiB, {util:.0f}% util")
+
+        if busy_gpus:
+            return False, f"{len(busy_gpus)} GPU(s) in use:\n" + "\n".join(busy_gpus)
+        checked = f" (checking GPUs {','.join(sorted(required))})" if required else ""
+        return True, f"All required GPUs available{checked}"
+    except Exception as e:
+        return True, f"Could not check GPUs: {e}"
+
+
+def check_disk_space(min_gb=50):
+    """Check if there's enough disk space. Returns (ok, free_gb, message)."""
+    try:
+        st = os.statvfs(os.path.expanduser("~"))
+        free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+        if free_gb < min_gb:
+            return False, free_gb, f"Low disk: {free_gb:.1f}GB free (need {min_gb}GB)"
+        return True, free_gb, f"Disk OK: {free_gb:.1f}GB free"
+    except Exception as e:
+        return True, 0, f"Could not check disk: {e}"
+
+
+def cleanup_hf_cache(keep_model=None):
+    """Remove unused models from HuggingFace cache to free disk space."""
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    if not os.path.isdir(cache_dir):
+        return 0
+    freed = 0
+    keep_model_slug = keep_model.replace("/", "--") if keep_model else None
+    for entry in os.listdir(cache_dir):
+        path = os.path.join(cache_dir, entry)
+        if not os.path.isdir(path) or not entry.startswith("models--"):
+            continue
+        # Keep the current model
+        if keep_model_slug and keep_model_slug in entry:
+            continue
+        # Calculate size
+        size = sum(
+            os.path.getsize(os.path.join(dp, f))
+            for dp, _, fns in os.walk(path) for f in fns
+        )
+        size_gb = size / (1024 ** 3)
+        print(f"Removing cached model: {entry} ({size_gb:.1f}GB)")
+        shutil.rmtree(path)
+        freed += size_gb
+    return freed
+
+
+def wait_for_gpus(timeout=300, interval=30):
+    """Wait for GPUs to become free. Returns True if free, False if timed out."""
+    start = time.time()
+    while time.time() - start < timeout:
+        ok, msg = check_gpu_availability()
+        if ok:
+            return True
+        print(f"GPUs busy, waiting {interval}s... ({msg})")
+        time.sleep(interval)
+    return False
+
+
+def run_benchmark(server_url):
+    result = subprocess.run(
+        [sys.executable, BENCHMARK_SCRIPT],
+        env={**os.environ, "SERVER_URL": server_url},
+        capture_output=True, text=True, timeout=600,
     )
-
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
-
-    t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
-
-    # --- Build token_bytes lookup for BPB evaluation ---
-    print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
-    torch.save(token_bytes_tensor, token_bytes_path)
-    print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
-
-    # Sanity check
-    test = "Hello world! Numbers: 123. Unicode: 你好"
-    encoded = enc.encode_ordinary(test)
-    decoded = enc.decode(encoded)
-    assert decoded == test, f"Tokenizer roundtrip failed: {test!r} -> {decoded!r}"
-    print(f"Tokenizer: sanity check passed (vocab_size={enc.n_vocab})")
-
-# ---------------------------------------------------------------------------
-# Runtime utilities (imported by train.py)
-# ---------------------------------------------------------------------------
-
-class Tokenizer:
-    """Minimal tokenizer wrapper. Training is handled above."""
-
-    def __init__(self, enc):
-        self.enc = enc
-        self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
-
-    @classmethod
-    def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
-        return cls(enc)
-
-    def get_vocab_size(self):
-        return self.enc.n_vocab
-
-    def get_bos_token_id(self):
-        return self.bos_token_id
-
-    def encode(self, text, prepend=None, num_threads=8):
-        if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
-        if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
-        elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
-                for row in ids:
-                    row.insert(0, prepend_id)
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
-        return ids
-
-    def decode(self, ids):
-        return self.enc.decode(ids)
+    if result.returncode != 0:
+        return None
+    metrics = {}
+    for line in result.stdout.strip().split("\n"):
+        if ":" in line:
+            key, _, val = line.partition(":")
+            try:
+                metrics[key.strip()] = float(val.strip())
+            except ValueError:
+                pass
+    return metrics
 
 
-def get_token_bytes(device="cpu"):
-    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+def get_peak_gpu_memory():
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        vals = [float(x) for x in out.split("\n") if x.strip()]
+        return sum(vals) / 1024.0 if vals else 0.0
+    except Exception:
+        return 0.0
+
+
+def compute_score(metrics, config):
+    opt = config["optimization"]
+    for name, bounds in opt.get("constraints", {}).items():
+        val = metrics.get(name)
+        if val is None:
+            return float("-inf")
+        if "max" in bounds and val > bounds["max"]:
+            return float("-inf")
+        if "min" in bounds and val < bounds["min"]:
+            return float("-inf")
+    primary = metrics.get(opt["primary_metric"])
+    if primary is None:
+        return float("-inf")
+    return -primary if opt["direction"] == "minimize" else primary
+
+
+def hash_file(path):
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        return hashlib.sha256(f.read()).hexdigest()[:16]
 
 
-def _document_batches(split, tokenizer_batch_size=128):
-    """Infinite iterator over document batches from parquet files."""
-    parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
-    val_path = os.path.join(DATA_DIR, VAL_FILENAME)
-    if split == "train":
-        parquet_paths = [p for p in parquet_paths if p != val_path]
-        assert len(parquet_paths) > 0, "No training shards found."
-    else:
-        parquet_paths = [val_path]
-    epoch = 1
-    while True:
-        for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
-        epoch += 1
+def check_already_tried(config_hash):
+    if not os.path.isdir(EXPERIMENTS_DIR):
+        return None
+    for fname in os.listdir(EXPERIMENTS_DIR):
+        if fname.endswith(".json") and config_hash in fname:
+            with open(os.path.join(EXPERIMENTS_DIR, fname)) as f:
+                return json.load(f)
+    return None
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
-    """
-    BOS-aligned dataloader with best-fit packing.
-    Every row starts with BOS. Documents packed using best-fit to minimize cropping.
-    When no document fits remaining space, crops shortest doc to fill exactly.
-    100% utilization (no padding).
-    """
-    assert split in ["train", "val"]
-    row_capacity = T + 1
-    batches = _document_batches(split)
-    bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = []
-    epoch = 1
+def get_next_experiment_num():
+    os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
+    nums = []
+    for fname in os.listdir(EXPERIMENTS_DIR):
+        if fname.endswith(".json"):
+            try:
+                nums.append(int(fname.split("_")[0]))
+            except (ValueError, IndexError):
+                pass
+    return max(nums, default=0) + 1
 
-    def refill_buffer():
-        nonlocal epoch
-        doc_batch, epoch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
 
-    # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
-    cpu_inputs = cpu_buffer[:B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+def save_experiment(num, config_hash, backend, score, metrics, status, description):
+    os.makedirs(EXPERIMENTS_DIR, exist_ok=True)
+    prefix = f"{num:04d}_{config_hash}"
+    shutil.copy2(SERVE_SCRIPT, os.path.join(EXPERIMENTS_DIR, f"{prefix}.sh"))
+    if os.path.exists(SERVER_LOG):
+        shutil.copy2(SERVER_LOG, os.path.join(EXPERIMENTS_DIR, f"{prefix}.log"))
+    data = dict(experiment_num=num, config_hash=config_hash, backend=backend,
+                score=score if score != float("-inf") else "-inf",
+                metrics=metrics or {}, status=status, description=description,
+                timestamp=time.strftime("%Y-%m-%d %H:%M:%S"))
+    with open(os.path.join(EXPERIMENTS_DIR, f"{prefix}.json"), "w") as f:
+        json.dump(data, f, indent=2, default=str)
 
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
 
-                remaining = row_capacity - pos
+def detect_backend():
+    try:
+        content = open(SERVE_SCRIPT).read().lower()
+    except FileNotFoundError:
+        return "unknown"
+    for name in ("vllm", "sglang"):
+        if name in content:
+            return name
+    if any(k in content for k in ("trtllm", "tensorrt", "tritonserver")):
+        return "trtllm"
+    return "unknown"
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
 
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
-                    pos += len(doc)
-                else:
-                    # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
+def print_result(status, backend, config_hash, experiment_num, metrics=None, score=None, error=None, elapsed=0):
+    print("---")
+    if metrics:
+        for k in sorted(metrics):
+            v = metrics[k]
+            print(f"{k}:".ljust(25) + (f"{v:.4f}" if isinstance(v, float) else str(v)))
+    if score is not None:
+        print(f"{'score:'.ljust(25)}{score:.4f}" if score != float("-inf") else f"{'score:'.ljust(25)}-inf")
+    if error:
+        print(f"{'error:'.ljust(25)}{error}")
+    print(f"{'backend:'.ljust(25)}{backend}")
+    print(f"{'elapsed_sec:'.ljust(25)}{elapsed:.1f}")
+    print(f"{'experiment_num:'.ljust(25)}{experiment_num}")
+    print(f"{'config_hash:'.ljust(25)}{config_hash}")
+    print(f"{'status:'.ljust(25)}{status}")
 
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
-        yield inputs, targets, epoch
 
-# ---------------------------------------------------------------------------
-# Evaluation (DO NOT CHANGE — this is the fixed metric)
-# ---------------------------------------------------------------------------
+def get_best_experiment():
+    """Find the best experiment so far."""
+    if not os.path.isdir(EXPERIMENTS_DIR):
+        return None
+    best, best_exp = float("-inf"), None
+    for fname in os.listdir(EXPERIMENTS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        with open(os.path.join(EXPERIMENTS_DIR, fname)) as f:
+            exp = json.load(f)
+        s = exp.get("score")
+        if s is not None and str(s) != "-inf" and float(s) > best:
+            best, best_exp = float(s), exp
+    return best_exp
 
-@torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size):
-    """
-    Bits per byte (BPB): vocab size-independent evaluation metric.
-    Sums per-token cross-entropy (in nats), sums target byte lengths,
-    then converts nats/byte to bits/byte. Special tokens (byte length 0)
-    are excluded from both sums.
-    Uses fixed MAX_SEQ_LEN so results are comparable across configs.
-    """
-    token_bytes = get_token_bytes(device="cuda")
-    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
-    steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
-    total_nats = 0.0
-    total_bytes = 0
-    for _ in range(steps):
-        x, y, _ = next(val_loader)
-        loss_flat = model(x, y, reduction='none').view(-1)
-        y_flat = y.view(-1)
-        nbytes = token_bytes[y_flat]
-        mask = nbytes > 0
-        total_nats += (loss_flat * mask).sum().item()
-        total_bytes += nbytes.sum().item()
-    return total_nats / (math.log(2) * total_bytes)
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+def notify_telegram(num, backend, status, score, metrics):
+    """Send one-way experiment summary to Telegram. Silently no-ops if not configured."""
+    try:
+        config = load_config()
+        tg = config.get("telegram", {})
+        token, chat_id = tg.get("bot_token", ""), tg.get("chat_id", "")
+        if not token or not chat_id:
+            return
+
+        score_str = f"{score:.1f}" if score != float("-inf") else "-inf"
+        lines = [f"Exp #{num} ({backend}): {status}, score: {score_str}"]
+
+        if metrics:
+            for k in ("throughput_tok_per_sec", "ttft_p99_ms", "itl_p99_ms", "peak_memory_gb"):
+                if k in metrics:
+                    lines.append(f"  {k}: {metrics[k]:.1f}")
+
+        best = get_best_experiment()
+        if best:
+            bs = best.get("score", "?")
+            lines.append(f"\nBest so far: #{best['experiment_num']} score={bs} ({best.get('backend','')})")
+
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "\n".join(lines)},
+            timeout=10,
+        )
+    except Exception:
+        pass  # never crash the harness for a notification failure
+
+
+def fail(status, error, num, config_hash, backend, proc, port):
+    save_experiment(num, config_hash, backend, float("-inf"), None, status, error)
+    print_result(status, backend, config_hash, num, error=error, elapsed=time.time() - _start)
+    stop_server(proc)
+    wait_for_port_free(port)
+    sys.exit(1)
+
+
+_start = 0
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
-    args = parser.parse_args()
+    import argparse as _ap
+    _parser = _ap.ArgumentParser(description="Experiment harness")
+    _parser.add_argument("--backend", help="Override backend detection from serve.sh")
+    _cli_args, _ = _parser.parse_known_args()
 
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
+    config = load_config()
+    requested_port = config["server"].get("port", 8000)
+    health_timeout = config["server"].get("health_timeout_sec", 300)
+    backend = _cli_args.backend or detect_backend()
+    config_hash = hash_file(SERVE_SCRIPT)
 
-    print(f"Cache directory: {CACHE_DIR}")
-    print()
+    # Pre-flight: disk space check
+    disk_ok, free_gb, disk_msg = check_disk_space(min_gb=50)
+    print(f"Disk: {disk_msg}")
+    if not disk_ok:
+        model_name = config.get("model", {}).get("name")
+        print(f"Attempting to free space by cleaning unused HF cache (keeping {model_name})...")
+        freed = cleanup_hf_cache(keep_model=model_name)
+        if freed > 0:
+            print(f"Freed {freed:.1f}GB from HF cache")
+        disk_ok, free_gb, disk_msg = check_disk_space(min_gb=50)
+        if not disk_ok:
+            print(f"ERROR: Still low on disk ({free_gb:.1f}GB). Cannot proceed safely.")
+            print("ACTION NEEDED: manually free disk space on this machine.")
+            sys.exit(1)
 
-    # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
+    # Pre-flight: GPU availability check
+    gpus_ok, gpu_msg = check_gpu_availability()
+    if not gpus_ok:
+        print(f"WARNING: {gpu_msg}")
+        print("Waiting up to 5 min for GPUs to free up...")
+        if not wait_for_gpus(timeout=300, interval=30):
+            print("ERROR: GPUs still busy after 5 min. Cannot proceed.")
+            print("ACTION NEEDED: check what's running on the GPUs.")
+            sys.exit(1)
+        print("GPUs now available.")
 
-    # Step 2: Train tokenizer
-    train_tokenizer()
-    print()
-    print("Done! Ready to train.")
+    # Port conflict handling — find a free port
+    port, port_moved = find_free_port(requested_port)
+    if port is None:
+        print(f"ERROR: no free port found starting from {requested_port}")
+        sys.exit(1)
+    if port_moved:
+        print(f"Port {requested_port} in use, using port {port} instead")
+
+    health_url = config["server"]["health_endpoint"].replace(str(requested_port), str(port))
+
+    # Dedup check
+    prev = check_already_tried(config_hash)
+    if prev:
+        print(f"SKIP: already tried as experiment #{prev['experiment_num']} (score: {prev['score']})")
+        print("---")
+        print(f"status:              duplicate")
+        print(f"config_hash:         {config_hash}")
+        sys.exit(1)
+
+    num = get_next_experiment_num()
+    _start = time.time()
+
+    print(f"Experiment #{num} (hash: {config_hash}, backend: {backend}, port: {port})")
+    proc = start_server(port)
+
+    print(f"Waiting for server at {health_url}...")
+    if not wait_for_ready(health_url, health_timeout, proc):
+        fail("server_failed", "server did not become ready", num, config_hash, backend, proc, port)
+
+    startup_time = time.time() - _start
+    print(f"Server ready in {startup_time:.1f}s")
+
+    print(f"Running benchmark...")
+    try:
+        metrics = run_benchmark(f"http://localhost:{port}")
+    except subprocess.TimeoutExpired:
+        fail("benchmark_timeout", "benchmark timed out", num, config_hash, backend, proc, port)
+
+    stop_server(proc)
+    wait_for_port_free(port)
+
+    if metrics is None:
+        save_experiment(num, config_hash, backend, float("-inf"), None, "benchmark_failed", "no metrics")
+        print_result("benchmark_failed", backend, config_hash, num, error="benchmark failed", elapsed=time.time() - _start)
+        sys.exit(1)
+
+    metrics["peak_memory_gb"] = get_peak_gpu_memory()
+    metrics["startup_sec"] = round(startup_time, 1)
+    score = compute_score(metrics, config)
+    status = "ok" if score != float("-inf") else "constraint_violated"
+
+    save_experiment(num, config_hash, backend, score, metrics, status, f"{backend} {config_hash}")
+    print_result(status, backend, config_hash, num, metrics=metrics, score=score, elapsed=time.time() - _start)
+    notify_telegram(num, backend, status, score, metrics)
