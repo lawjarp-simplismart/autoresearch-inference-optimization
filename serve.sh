@@ -8,7 +8,8 @@ set -e
 # Hardware: 8x H100-80GB
 # =============================================================================
 
-# Backend: vllm
+# Activate venv and install vllm
+source .venv/bin/activate
 pip install -q vllm
 
 # Environment
