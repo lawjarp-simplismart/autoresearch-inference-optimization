@@ -25,9 +25,9 @@ backends_to_try:
   # - trtllm
 
 server:
-  health_endpoint: "http://localhost:8000/health"
+  health_endpoint: "http://localhost:8001/health"
   health_timeout_sec: 300   # max seconds to wait for server readiness
-  port: 8000
+  port: 8001
 
 optimization:
   # The metric to optimize (must match a key printed by benchmark.py)
@@ -41,10 +41,14 @@ optimization:
     peak_memory_gb: { max: 75 }
 
 benchmark:
-  num_requests: 200       # total requests per benchmark run
-  concurrency: 1          # max concurrent in-flight requests (sweep: 1,2,4,8,16)
-  prompt_tokens: 1000     # approximate input prompt length in tokens
-  output_tokens: 500      # max output tokens per request
+  num_requests: 200       # total requests per sweep point
+
+  # Sweep parameters: use a list to sweep, or a single value for fixed.
+  # The benchmark runs every combination (cartesian product).
+  concurrency: [1, 2, 4, 8, 16]
+  prompt_tokens: [1, 10, 100, 1000]
+  output_tokens: [500]
+
   # request_rate: null    # optional: requests/sec rate limit (null = no limit)
 
 notifications:

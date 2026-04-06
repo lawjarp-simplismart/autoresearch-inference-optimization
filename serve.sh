@@ -19,4 +19,4 @@ python -m vllm.entrypoints.openai.api_server \
     --model google/gemma-4-31B \
     --tensor-parallel-size 4 \
     --gpu-memory-utilization 0.90 \
-    --port ${PORT:-8000}
+    --port ${PORT:-8001}
