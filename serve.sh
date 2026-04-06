@@ -10,7 +10,7 @@ set -e
 
 # Activate venv and install vllm
 source .venv/bin/activate
-pip install -q vllm
+uv pip install -q vllm
 
 # Environment — GPU 0 occupied by styletts2, use GPUs 1-4
 export CUDA_VISIBLE_DEVICES=1,2,3,4
