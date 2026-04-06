@@ -8,20 +8,21 @@ set -e
 # Hardware: 8x H100-80GB
 # =============================================================================
 
-# Activate venv and install vllm + latest transformers (gemma4 support)
+# Activate venv, install only if missing
 source .venv/bin/activate
-uv pip install -q vllm
-uv pip install -q --upgrade transformers
+pip show vllm >/dev/null 2>&1 || uv pip install -q vllm
+pip show transformers >/dev/null 2>&1 || uv pip install -q --upgrade transformers
 
-# Use all 8 GPUs (GPU 0 has ~17GB used by styletts2, ~64GB free — enough for tp=8 shard)
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+# Use GPUs 1-4 (GPU 0 occupied by styletts2)
+export CUDA_VISIBLE_DEVICES=1,2,3,4
 
 # Launch server
 python -m vllm.entrypoints.openai.api_server \
     --model google/gemma-4-31B \
-    --tensor-parallel-size 8 \
+    --tensor-parallel-size 4 \
     --gpu-memory-utilization 0.90 \
     --max-model-len 8192 \
     --enable-chunked-prefill \
+    --quantization fp8 \
     --chat-template chat_template.jinja \
     --port ${PORT:-8000}
