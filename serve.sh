@@ -12,7 +12,7 @@ set -e
 pip install -q vllm
 
 # Environment
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 # Launch server
 python -m vllm.entrypoints.openai.api_server \
