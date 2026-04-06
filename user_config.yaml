@@ -1,0 +1,61 @@
+# =============================================================================
+# Inference Optimization Configuration
+# Fill this out before starting the agent. Do not modify during experiments.
+# =============================================================================
+
+model:
+  name: "google/gemma-4-31B"
+  revision: null  # optional HuggingFace revision/commit
+
+# Remote machine configuration
+# The agent runs locally (Claude Code) and SSHs into the remote machine to execute experiments.
+# Change ssh_host when switching machines (e.g., yottah100 → b200-server).
+remote:
+  ssh_host: "yottah100"                                  # SSH config alias or user@host
+  project_path: "~/prajwal/autoresearch-inference-optimization"  # path on remote machine
+
+hardware:
+  gpu_type: "H100-80GB"
+  num_gpus: 8
+
+# Backends to optimize (agent will test sequentially in this order)
+backends_to_try:
+  - vllm
+  # - sglang
+  # - trtllm
+
+server:
+  health_endpoint: "http://localhost:8000/health"
+  health_timeout_sec: 300   # max seconds to wait for server readiness
+  port: 8000
+
+optimization:
+  # The metric to optimize (must match a key printed by benchmark.py)
+  primary_metric: "throughput_tok_per_sec"
+  direction: "maximize"  # "maximize" or "minimize"
+
+  # Hard constraints: any violation → experiment is discarded
+  constraints:
+    ttft_p99_ms: { max: 500 }
+    itl_p99_ms: { max: 100 }
+    peak_memory_gb: { max: 75 }
+
+benchmark:
+  num_requests: 200       # total requests per benchmark run
+  concurrency: 1          # max concurrent in-flight requests (sweep: 1,2,4,8,16)
+  prompt_tokens: 1000     # approximate input prompt length in tokens
+  output_tokens: 500      # max output tokens per request
+  # request_rate: null    # optional: requests/sec rate limit (null = no limit)
+
+notifications:
+  backend: telegram
+  telegram:
+    bot_token: "8606305918:AAFSP-BKuSibTvYOVpjRWayF-TSnD5U158o"
+    chat_id: "6132058584"
+  notify_on:
+    new_best: true              # notify when a new best score is found
+    consecutive_failures: 5     # notify after N consecutive non-improving experiments
+    backend_switch: true        # notify when switching backends
+
+experiment:
+  timeout_sec: 900  # max total wall time per experiment (install + launch + bench)
