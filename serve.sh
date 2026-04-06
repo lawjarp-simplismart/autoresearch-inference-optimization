@@ -22,4 +22,5 @@ python -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size 4 \
     --gpu-memory-utilization 0.90 \
     --max-model-len 8192 \
+    --chat-template chat_template.jinja \
     --port ${PORT:-8000}
