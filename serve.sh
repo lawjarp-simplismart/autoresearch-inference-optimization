@@ -8,9 +8,10 @@ set -e
 # Hardware: 8x H100-80GB
 # =============================================================================
 
-# Activate venv and install vllm
+# Activate venv and install vllm + latest transformers (gemma4 support)
 source .venv/bin/activate
 uv pip install -q vllm
+uv pip install -q --upgrade transformers
 
 # Environment — GPU 0 occupied by styletts2, use GPUs 1-4
 export CUDA_VISIBLE_DEVICES=1,2,3,4
