@@ -21,8 +21,7 @@ python -m vllm.entrypoints.openai.api_server \
     --model google/gemma-4-31B \
     --tensor-parallel-size 4 \
     --gpu-memory-utilization 0.90 \
-    --max-model-len 4096 \
-    --enable-chunked-prefill \
+    --max-model-len 8192 \
     --quantization fp8 \
     --chat-template chat_template.jinja \
     --port ${PORT:-8000}
