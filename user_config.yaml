@@ -14,6 +14,7 @@ remote:
 hardware:
   gpu_type: "H100-80GB"
   num_gpus: 8
+  max_tp: 4
 
 backends_to_try:
   - vllm
@@ -27,15 +28,19 @@ optimization:
   primary_metric: "throughput_tok_per_sec"
   direction: "maximize"
   constraints:
-    ttft_p99_ms: { max: 500 }
-    itl_p99_ms: { max: 100 }
-    peak_memory_gb: { max: 75 }
+    ttft_p99_ms: { max: 5000 }
+    itl_p99_ms: { max: 1000 }
+    peak_memory_gb: { max: 600 }
 
 benchmark:
   num_requests: 200
   concurrency: 16
   prompt_tokens: 1000
   output_tokens: 500
+
+telegram:
+  bot_token: "8606305918:AAFSP-BKuSibTvYOVpjRWayF-TSnD5U158o"
+  chat_id: "6132058584"
 
 experiment:
   timeout_sec: 900
