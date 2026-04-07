@@ -16,7 +16,11 @@ pip show transformers >/dev/null 2>&1 || uv pip install -q --upgrade transformer
 # Use GPUs 1-4 (GPU 0 occupied by styletts2)
 export CUDA_VISIBLE_DEVICES=1,2,3,4
 
-# Launch server — best config (1511.5 tok/s)
+# NCCL tuning for H100 NVLink
+export NCCL_ALGO=Ring
+export NCCL_MIN_NCHANNELS=16
+
+# Launch server
 python -m vllm.entrypoints.openai.api_server \
     --model google/gemma-4-31B \
     --tensor-parallel-size 4 \

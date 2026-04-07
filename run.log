@@ -1,0 +1,79 @@
+Uninstalled 11 packages in 118ms
+Installed 11 packages in 122ms
+Disk: Disk OK: 505.7GB free
+Port 8000 in use, using port 8001 instead
+Experiment #24 (hash: bce535f50329caac, backend: vllm, port: 8001)
+Waiting for server at http://localhost:8001/health...
+Server ready in 164.8s
+Running benchmark...
+---
+Avg Latency Ms:          11896.4400
+Avg Per Req Tok Per S:   40.7300
+Avg Tpot Ms:             22.5200
+Avg Ttft Ms:             1096.8800
+Concurrency:             16.0000
+Failed:                  0.0000
+Max Latency Ms:          12997.1900
+Median Latency Ms:       11895.5300
+Median Per Req Tok Per S:41.3700
+Median Tpot Ms:          21.9500
+Median Ttft Ms:          1323.9000
+Min Latency Ms:          9740.1600
+Num Requests:            200.0000
+Output Tokens Avg:       483.0000
+P90 Latency Ms:          11930.4400
+P90 Tpot Ms:             24.7200
+P90 Ttft Ms:             1379.7900
+P95 Latency Ms:          12960.6800
+P95 Tpot Ms:             28.3900
+P95 Ttft Ms:             1950.0200
+P99 Latency Ms:          12994.7600
+P99 Tpot Ms:             30.1800
+P99 Ttft Ms:             2558.9100
+Prompt Tokens Avg:       1000.0000
+Successful:              200.0000
+Throughput Output Tok Per S:629.4100
+Throughput Req Per S:    1.3000
+Throughput Total Tok Per S:1931.4500
+Total Output Tokens:     96664.0000
+Total Prompt Tokens:     199966.0000
+Wall Time S:             153.5800
+avg_latency_ms:          11896.4400
+avg_per_req_tok_per_s:   40.7300
+avg_tpot_ms:             22.5200
+avg_ttft_ms:             1096.8800
+concurrency:             16.0000
+failed:                  0.0000
+itl_p50_ms:              21.9500
+itl_p99_ms:              30.1800
+max_latency_ms:          12997.1900
+median_latency_ms:       11895.5300
+median_per_req_tok_per_s:41.3700
+min_latency_ms:          9740.1600
+num_requests:            200.0000
+output_tokens_avg:       483.0000
+p90_latency_ms:          11930.4400
+p90_tpot_ms:             24.7200
+p90_ttft_ms:             1379.7900
+p95_latency_ms:          12960.6800
+p95_tpot_ms:             28.3900
+p95_ttft_ms:             1950.0200
+p99_latency_ms:          12994.7600
+peak_memory_gb:          16.5371
+prompt_tokens_avg:       1000.0000
+startup_sec:             164.8000
+successful:              200.0000
+throughput_req_per_sec:  1.3000
+throughput_tok_per_sec:  629.4100
+throughput_total_tok_per_s:1931.4500
+total_output_tokens:     96664.0000
+total_prompt_tokens:     199966.0000
+ttft_p50_ms:             1323.9000
+ttft_p99_ms:             2558.9100
+wall_time_s:             153.5800
+score:                   629.4100
+backend:                 vllm
+elapsed_sec:             319.8
+experiment_num:          24
+config_hash:             bce535f50329caac
+status:                  ok

@@ -1,0 +1,10 @@
+{
+  "experiment_num": 8,
+  "config_hash": "19854142d9bcca1e",
+  "backend": "vllm",
+  "score": "-inf",
+  "metrics": {},
+  "status": "server_failed",
+  "description": "server did not become ready",
+  "timestamp": "2026-04-07 02:24:42"
+}

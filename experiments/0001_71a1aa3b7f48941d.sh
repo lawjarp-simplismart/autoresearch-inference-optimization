@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+
+# =============================================================================
+# INFERENCE SERVER CONFIGURATION
+# Model: google/gemma-4-31B
+# Backend: vLLM
+# Hardware: 8x H100-80GB
+# =============================================================================
+
+# Backend: vllm
+pip install -q vllm
+
+# Environment
+export CUDA_VISIBLE_DEVICES=4,5,6,7
+
+# Launch server
+python -m vllm.entrypoints.openai.api_server \
+    --model google/gemma-4-31B \
+    --tensor-parallel-size 4 \
+    --gpu-memory-utilization 0.90 \
+    --port ${PORT:-8001}
