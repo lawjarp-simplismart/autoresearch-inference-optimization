@@ -5,11 +5,11 @@ set -e
 # INFERENCE SERVER CONFIGURATION
 # Model:     google/gemma-4-26B-A4B-it  (26B total, ~4B active MoE)
 # Backend:   vLLM (pip-installed into a venv on remote)
-# Hardware:  1x H100-80GB, GPU 0 (agent quota GPUs 0-1, TP=1)
+# Hardware:  1x H100-80GB, GPU 2 (agent quota GPUs 2-3, TP=1)
 # Objective: maximize throughput_tok_per_sec @ concurrency=8, 1k in / 500 out
 # =============================================================================
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=2
 
 # HF token for gated Gemma access — expected in remote shell env
 # If missing, the model download will fail.

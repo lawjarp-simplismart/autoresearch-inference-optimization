@@ -2,7 +2,7 @@
 # Inference Optimization Configuration
 # Branch: autoresearch/gemma4-26b-a4b-vllm
 # Model:  google/gemma-4-26B-A4B-it  (26B total, ~4B active MoE)
-# Remote: yottah100, GPUs 0-1 only, 2 experiments in parallel max (TP=1 each)
+# Remote: yottah100, GPUs 2-3 only, 2 experiments in parallel max (TP=1 each)
 # =============================================================================
 
 model:
@@ -15,7 +15,7 @@ remote:
 
 hardware:
   gpu_type: "H100-80GB"
-  num_gpus: 2          # agent quota: GPUs 0 and 1 only
+  num_gpus: 2          # agent quota: GPUs 2 and 3 only
   max_tp: 1            # TP=1 focus; squeeze single-GPU throughput first
 
 backends_to_try:
