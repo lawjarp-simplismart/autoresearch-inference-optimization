@@ -32,7 +32,8 @@ optimization:
   constraints:
     ttft_p99_ms:    { max: 10000 }
     itl_p99_ms:     { max: 500 }
-    peak_memory_gb: { max: 80 }    # single H100 budget
+    peak_memory_gb: { max: 700 }   # engine.py sums ALL GPUs; other users hold ~150 GB on 0,1.
+                                   # Docker --gpus pins us to 1 device; true OOM → server_failed.
 
 benchmark:
   num_requests: 200
