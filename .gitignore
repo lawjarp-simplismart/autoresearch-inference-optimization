@@ -12,8 +12,7 @@ worktrees/
 results/
 queue/
 
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
+# Agent prompt files
 AGENTS.md
 
 # Experimental code/artifacts
@@ -21,3 +20,13 @@ dev/
 
 # Results file
 results.tsv
+
+# Agent-generated (per-experiment, not worth tracking)
+experiment.yaml
+experiments.jsonl
+experiments/
+server.log
+run.log
+
+# Claude session state
+.claude/

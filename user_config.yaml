@@ -1,0 +1,55 @@
+# =============================================================================
+# Inference Optimization Configuration
+# Do not modify during experiments — the agent edits serve.sh only.
+# =============================================================================
+
+model:
+  name: "google/gemma-4-31B"
+  revision: null
+
+remote:
+  ssh_host: "yottah100"
+  project_path: "~/prajwal/autoresearch-inference-optimization"
+
+hardware:
+  gpu_type: "H100-80GB"
+  num_gpus: 8
+  max_tp: 4
+
+backends_to_try:
+  - sglang
+
+server:
+  health_endpoint: "http://localhost:8001/health"
+  health_timeout_sec: 900
+  port: 8001
+
+optimization:
+  primary_metric: "throughput_tok_per_sec"
+  direction: "maximize"
+  constraints:
+    peak_memory_gb: { max: 320 }
+
+benchmark:
+  num_requests: 20
+  concurrency: 1
+  prompt_tokens: 5000
+  output_tokens: 250
+  prompt_cache_max_len: 4000   # 80% of 5000 tokens stay cached across requests
+  prompt_randomize: true
+
+telegram:
+  bot_token: "8606305918:AAFSP-BKuSibTvYOVpjRWayF-TSnD5U158o"
+  chat_id: "6132058584"
+
+experiment:
+  timeout_sec: 900
+
+# Parameter grid for `engine.py gaps` — agent explores untried values
+search_space:
+  tensor_parallel_size: [1, 2, 4, 8]
+  quantization: [fp8, awq, gptq, null]
+  gpu_memory_utilization: [0.80, 0.85, 0.90, 0.95]
+  max_num_seqs: [64, 128, 256, 512]
+  enable_chunked_prefill: [true, false]
+  max_model_len: [4096, 8192, 16384]
