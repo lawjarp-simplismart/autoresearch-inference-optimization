@@ -1,55 +1,60 @@
 # =============================================================================
 # Inference Optimization Configuration
-# Do not modify during experiments — the agent edits serve.sh only.
+# Branch: autoresearch/gemma4-26b-a4b-vllm
+# Model:  google/gemma-4-26B-A4B-it  (26B total, ~4B active MoE)
+# Remote: yottah100, GPUs 0-1 only, 2 experiments in parallel max (TP=1 each)
 # =============================================================================
 
 model:
-  name: "google/gemma-4-31B"
+  name: "google/gemma-4-26B-A4B-it"
   revision: null
 
 remote:
   ssh_host: "yottah100"
-  project_path: "~/prajwal/autoresearch-inference-optimization"
+  project_path: "~/autoresearch-inference-optimization"
 
 hardware:
   gpu_type: "H100-80GB"
-  num_gpus: 8
-  max_tp: 4
+  num_gpus: 2          # agent quota: GPUs 0 and 1 only
+  max_tp: 1            # TP=1 focus; squeeze single-GPU throughput first
 
 backends_to_try:
-  - sglang
+  - vllm
 
 server:
-  health_endpoint: "http://localhost:8001/health"
-  health_timeout_sec: 900
-  port: 8001
+  health_endpoint: "http://localhost:8000/health"
+  health_timeout_sec: 600   # first run will JIT-compile kernels; give it room
+  port: 8000
 
 optimization:
   primary_metric: "throughput_tok_per_sec"
   direction: "maximize"
   constraints:
-    peak_memory_gb: { max: 320 }
+    ttft_p99_ms:    { max: 10000 }
+    itl_p99_ms:     { max: 500 }
+    peak_memory_gb: { max: 80 }    # single H100 budget
 
 benchmark:
-  num_requests: 20
-  concurrency: 1
-  prompt_tokens: 5000
-  output_tokens: 250
-  prompt_cache_max_len: 4000   # 80% of 5000 tokens stay cached across requests
-  prompt_randomize: true
+  num_requests: 200
+  concurrency: 8
+  prompt_tokens: 1000
+  output_tokens: 500
 
 telegram:
-  bot_token: "8606305918:AAFSP-BKuSibTvYOVpjRWayF-TSnD5U158o"
-  chat_id: "6132058584"
+  bot_token: ""
+  chat_id: ""
 
 experiment:
-  timeout_sec: 900
+  timeout_sec: 1800   # model download + first-run compile can be slow
 
-# Parameter grid for `engine.py gaps` — agent explores untried values
+# Parameter grid for `engine.py gaps` — TP=1 sweep on a single H100.
 search_space:
-  tensor_parallel_size: [1, 2, 4, 8]
-  quantization: [fp8, awq, gptq, null]
-  gpu_memory_utilization: [0.80, 0.85, 0.90, 0.95]
-  max_num_seqs: [64, 128, 256, 512]
+  tensor_parallel_size: [1]
+  quantization: [null, fp8, awq]
+  kv_cache_dtype: [auto, fp8]
+  gpu_memory_utilization: [0.85, 0.90, 0.95]
+  max_num_seqs: [32, 64, 128, 256, 512]
+  max_num_batched_tokens: [2048, 4096, 8192, 16384]
   enable_chunked_prefill: [true, false]
   max_model_len: [4096, 8192, 16384]
+  attention_backend: [FLASH_ATTN, FLASHINFER, TRITON_ATTN]
