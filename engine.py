@@ -232,14 +232,19 @@ def find_free_port(start_port, max_attempts=20):
 
 
 def get_required_gpus():
-    """Parse CUDA_VISIBLE_DEVICES from serve.sh."""
+    """Parse GPU indices from serve.sh (supports CUDA_VISIBLE_DEVICES and docker --gpus)."""
     try:
         content = SERVE_SCRIPT.read_text()
+        # Check CUDA_VISIBLE_DEVICES
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("export CUDA_VISIBLE_DEVICES=") or line.startswith("CUDA_VISIBLE_DEVICES="):
                 val = line.split("=", 1)[1].strip().strip('"').strip("'")
                 return set(val.split(","))
+        # Check docker --gpus 'device=X,Y' or '"device=X,Y"'
+        m = re.search(r'device=([0-9,]+)', content)
+        if m:
+            return set(m.group(1).split(","))
     except Exception:
         pass
     return None

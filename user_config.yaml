@@ -1,51 +1,53 @@
 # =============================================================================
 # Inference Optimization Configuration
 # Do not modify during experiments — the agent edits serve.sh only.
+# Customize this per branch for each model/hardware combination.
 # =============================================================================
 
 model:
-  name: "google/gemma-4-31B"
+  name: ""          # e.g. "google/gemma-4-31B"
   revision: null
 
 remote:
-  ssh_host: "yottah100"
-  project_path: "~/prajwal/autoresearch-inference-optimization"
+  ssh_host: ""      # e.g. "yottah100"
+  project_path: "~/autoresearch-inference-optimization"
 
 hardware:
-  gpu_type: "H100-80GB"
+  gpu_type: ""      # e.g. "H100-80GB"
   num_gpus: 8
-  max_tp: 4
+  max_tp: 8
 
 backends_to_try:
-  - sglang
+  - vllm
 
 server:
-  health_endpoint: "http://localhost:8001/health"
-  health_timeout_sec: 900
-  port: 8001
+  health_endpoint: "http://localhost:8000/health"
+  health_timeout_sec: 300
+  port: 8000
 
 optimization:
   primary_metric: "throughput_tok_per_sec"
   direction: "maximize"
   constraints:
-    peak_memory_gb: { max: 320 }
+    ttft_p99_ms: { max: 5000 }
+    itl_p99_ms: { max: 1000 }
+    peak_memory_gb: { max: 600 }
 
 benchmark:
-  num_requests: 20
-  concurrency: 1
-  prompt_tokens: 5000
-  output_tokens: 250
-  prompt_cache_max_len: 4000   # 80% of 5000 tokens stay cached across requests
-  prompt_randomize: true
+  num_requests: 200
+  concurrency: 16
+  prompt_tokens: 1000
+  output_tokens: 500
 
 telegram:
-  bot_token: "8606305918:AAFSP-BKuSibTvYOVpjRWayF-TSnD5U158o"
-  chat_id: "6132058584"
+  bot_token: ""
+  chat_id: ""
 
 experiment:
   timeout_sec: 900
 
 # Parameter grid for `engine.py gaps` — agent explores untried values
+# Update this per model/hardware to reflect the actual search space
 search_space:
   tensor_parallel_size: [1, 2, 4, 8]
   quantization: [fp8, awq, gptq, null]
