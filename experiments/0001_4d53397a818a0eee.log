@@ -1,0 +1,56 @@
+Traceback (most recent call last):
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1014, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1131, in _hf_hub_download_to_cache_dir
+    os.makedirs(os.path.dirname(blob_path), exist_ok=True)
+  File "/home/ubuntu/.local/share/uv/python/cpython-3.10.20-linux-x86_64-gnu/lib/python3.10/os.py", line 215, in makedirs
+    makedirs(head, exist_ok=exist_ok)
+  File "/home/ubuntu/.local/share/uv/python/cpython-3.10.20-linux-x86_64-gnu/lib/python3.10/os.py", line 225, in makedirs
+    mkdir(name, mode)
+PermissionError: [Errno 13] Permission denied: '/home/ubuntu/.cache/huggingface/hub/models--google--gemma-4-31B'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/share/uv/python/cpython-3.10.20-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/ubuntu/.local/share/uv/python/cpython-3.10.20-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/launch_server.py", line 32, in <module>
+    server_args = prepare_server_args(sys.argv[1:])
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 5592, in prepare_server_args
+    return ServerArgs.from_cli_args(raw_args)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 5078, in from_cli_args
+    return cls(**{attr: getattr(args, attr) for attr in attrs})
+  File "<string>", line 331, in __init__
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 733, in __post_init__
+    self._handle_gpu_memory_settings(gpu_mem)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 1010, in _handle_gpu_memory_settings
+    if not self.use_mla_backend():
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 5111, in use_mla_backend
+    model_config = self.get_model_config()
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/server_args.py", line 5092, in get_model_config
+    self.model_config = ModelConfig.from_server_args(self)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/configs/model_config.py", line 250, in from_server_args
+    return ModelConfig(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/configs/model_config.py", line 127, in __init__
+    self.hf_config = get_config(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/utils/common.py", line 3475, in wrapper
+    result = func(*args, **kwargs)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/sglang/srt/utils/hf_transformers_utils.py", line 315, in get_config
+    config = AutoConfig.from_pretrained(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/models/auto/configuration_auto.py", line 1332, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/configuration_utils.py", line 662, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/configuration_utils.py", line 721, in _get_config_dict
+    resolved_config_file = cached_file(
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/home/ubuntu/prajwal/autoresearch-inference-optimization/.venv/lib/python3.10/site-packages/transformers/utils/hub.py", line 524, in cached_files
+    raise OSError(
+OSError: PermissionError at /home/ubuntu/.cache/huggingface/hub/models--google--gemma-4-31B when downloading google/gemma-4-31B. Check cache directory permissions. Common causes: 1) another user is downloading the same model (please wait); 2) a previous download was canceled and the lock file needs manual removal.

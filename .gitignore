@@ -21,12 +21,11 @@ dev/
 # Results file
 results.tsv
 
-# Agent-generated (per-experiment, not worth tracking)
-experiment.yaml
-experiments.jsonl
-experiments/
+# Ephemeral run artifacts (regenerated on each run)
 server.log
 run.log
+run.pid
+run.exitcode
 
 # Claude session state
 .claude/

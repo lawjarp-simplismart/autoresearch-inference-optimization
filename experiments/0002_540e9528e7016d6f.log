@@ -1,0 +1,42 @@
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299] 
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299]        █     █     █▄   ▄█
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.19.0
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299]   █▄█▀ █     █     █     █  model   google/gemma-4-26B-A4B-it
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:299] 
+(APIServer pid=620636) INFO 04-13 17:10:02 [utils.py:233] non-default args: {'model': 'google/gemma-4-26B-A4B-it', 'dtype': 'bfloat16', 'max_model_len': 8192, 'max_num_seqs': 128}
+(APIServer pid=620636) Traceback (most recent call last):
+(APIServer pid=620636)   File "/home/ubuntu/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+(APIServer pid=620636)     return _run_code(code, main_globals, None,
+(APIServer pid=620636)   File "/home/ubuntu/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/runpy.py", line 86, in _run_code
+(APIServer pid=620636)     exec(code, run_globals)
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/entrypoints/openai/api_server.py", line 710, in <module>
+(APIServer pid=620636)     uvloop.run(run_server(args))
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/uvloop/__init__.py", line 69, in run
+(APIServer pid=620636)     return loop.run_until_complete(wrapper())
+(APIServer pid=620636)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=620636)     return await main
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/entrypoints/openai/api_server.py", line 670, in run_server
+(APIServer pid=620636)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/entrypoints/openai/api_server.py", line 684, in run_server_worker
+(APIServer pid=620636)     async with build_async_engine_client(
+(APIServer pid=620636)   File "/home/ubuntu/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/contextlib.py", line 199, in __aenter__
+(APIServer pid=620636)     return await anext(self.gen)
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/entrypoints/openai/api_server.py", line 100, in build_async_engine_client
+(APIServer pid=620636)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=620636)   File "/home/ubuntu/.local/share/uv/python/cpython-3.10-linux-x86_64-gnu/lib/python3.10/contextlib.py", line 199, in __aenter__
+(APIServer pid=620636)     return await anext(self.gen)
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/entrypoints/openai/api_server.py", line 124, in build_async_engine_client_from_engine_args
+(APIServer pid=620636)     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/engine/arg_utils.py", line 1549, in create_engine_config
+(APIServer pid=620636)     model_config = self.create_model_config()
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/vllm/engine/arg_utils.py", line 1398, in create_model_config
+(APIServer pid=620636)     return ModelConfig(
+(APIServer pid=620636)   File "/home/ubuntu/autoresearch-inference-optimization/.venv-vllm/lib/python3.10/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(APIServer pid=620636)     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(APIServer pid=620636) pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelConfig
+(APIServer pid=620636)   Value error, The checkpoint you are trying to load has model type `gemma4` but Transformers does not recognize this architecture. This could be because of an issue with the checkpoint, or because your version of Transformers is out of date.
+(APIServer pid=620636) 
+(APIServer pid=620636) You can update Transformers with the command `pip install --upgrade transformers`. If this does not work, and the checkpoint is very new, then there may not be a release version that supports this model yet. In this case, you can get the most up-to-date code by installing Transformers from source with the command `pip install git+https://github.com/huggingface/transformers.git` [type=value_error, input_value=ArgsKwargs((), {'model': ...nderer_num_workers': 1}), input_type=ArgsKwargs]
+(APIServer pid=620636)     For further information visit https://errors.pydantic.dev/2.13/v/value_error

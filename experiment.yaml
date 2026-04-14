@@ -1,0 +1,17 @@
+description: "DFlash FP8 target sweep (num_spec=15). Stack FP8 bandwidth + DFlash. vs DFlash bf16 sweep 798.68."
+params:
+  backend: vllm
+  image: "vllm/vllm-openai:nightly"
+  model: "lovedheart/Qwen3.5-9B-FP8"
+  draft_model: "z-lab/Qwen3.5-9B-DFlash"
+  tensor_parallel_size: 1
+  max_model_len: 16384
+  max_num_batched_tokens: 32768
+  gpu_memory_utilization: 0.95
+  language_model_only: true
+  attention_backend: flash_attn
+  speculative_method: dflash
+  num_speculative_tokens: 15
+  trust_remote_code: true
+  async_scheduling: true
+tags: [vllm, fp8, tp1, sweep-4corner, spec-dflash]

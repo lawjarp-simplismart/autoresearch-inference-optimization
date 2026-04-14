@@ -1,0 +1,8 @@
+E: Failed to fetch https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/Packages.gz  File has unexpected size (2497166 != 2517795). Mirror sync in progress? [IP: 92.123.135.81 443]
+   Hashes of expected file:
+    - Filesize:2517795 [weak]
+    - SHA256:b78feb03d328b69b8fbd3ad59777a67c8244df5f8843b433844a231967d0d04d
+    - SHA1:aab9178d5ab65162bb93c88e5836b94c634ff03b [weak]
+    - MD5Sum:6b56572fd7e7243e9e2a4ce394719ca5 [weak]
+   Release file created at: Mon, 13 Apr 2026 08:06:05 +0000
+E: Some index files failed to download. They have been ignored, or old ones used instead.

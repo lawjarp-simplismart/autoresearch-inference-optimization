@@ -1,0 +1,2 @@
+usage: vllm serve [model_tag] [options]
+vllm serve: error: argument --mamba-cache-mode: invalid choice: 'unique' (choose from align, all, none)

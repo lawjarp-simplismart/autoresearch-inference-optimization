@@ -1,0 +1,91 @@
+debconf: delaying package configuration, since apt-utils is not installed
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+compressed-tensors 0.14.0.1 requires transformers<5.0.0, but you have transformers 5.5.0.dev0 which is incompatible.
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299] 
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299]        █     █     █▄   ▄█
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.19.1rc1.dev232+g0e39202ca
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299]   █▄█▀ █     █     █     █  model   google/gemma-4-31B-it
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:299] 
+(APIServer pid=51) INFO 04-13 07:49:22 [utils.py:233] non-default args: {'model_tag': 'google/gemma-4-31B-it', 'host': '0.0.0.0', 'port': 8001, 'model': 'google/gemma-4-31B-it', 'trust_remote_code': True, 'max_model_len': 8192, 'enforce_eager': True, 'tensor_parallel_size': 2, 'gpu_memory_utilization': 0.85, 'enable_prefix_caching': False, 'max_num_seqs': 64, 'speculative_config': {'model': 'RedHatAI/gemma-4-31B-it-speculator.eagle3', 'num_speculative_tokens': 3, 'method': 'eagle3'}}
+(APIServer pid=51) INFO 04-13 07:49:29 [model.py:554] Resolved architecture: Gemma4ForConditionalGeneration
+(APIServer pid=51) INFO 04-13 07:49:29 [model.py:1684] Using max model len 8192
+(APIServer pid=51) INFO 04-13 07:49:36 [model.py:554] Resolved architecture: Eagle3LlamaForCausalLM
+(APIServer pid=51) INFO 04-13 07:49:36 [model.py:1684] Using max model len 262144
+(APIServer pid=51) INFO 04-13 07:49:36 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(APIServer pid=51) INFO 04-13 07:49:36 [config.py:101] Gemma4 model has heterogeneous head dimensions (head_dim=256, global_head_dim=512). Forcing TRITON_ATTN backend to prevent mixed-backend numerical divergence.
+(APIServer pid=51) INFO 04-13 07:49:36 [vllm.py:809] Asynchronous scheduling is enabled.
+(APIServer pid=51) WARNING 04-13 07:49:36 [vllm.py:867] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+(APIServer pid=51) WARNING 04-13 07:49:36 [vllm.py:878] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(APIServer pid=51) INFO 04-13 07:49:36 [kernel.py:199] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'])
+(APIServer pid=51) INFO 04-13 07:49:36 [vllm.py:1056] Cudagraph is disabled under eager mode
+(APIServer pid=51) Traceback (most recent call last):
+(APIServer pid=51)   File "/usr/local/bin/vllm", line 6, in <module>
+(APIServer pid=51)     sys.exit(main())
+(APIServer pid=51)              ^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/cli/main.py", line 75, in main
+(APIServer pid=51)     args.dispatch_function(args)
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/cli/serve.py", line 122, in cmd
+(APIServer pid=51)     uvloop.run(run_server(args))
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/uvloop/__init__.py", line 96, in run
+(APIServer pid=51)     return __asyncio.run(
+(APIServer pid=51)            ^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/lib/python3.12/asyncio/runners.py", line 195, in run
+(APIServer pid=51)     return runner.run(main)
+(APIServer pid=51)            ^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+(APIServer pid=51)     return self._loop.run_until_complete(task)
+(APIServer pid=51)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=51)     return await main
+(APIServer pid=51)            ^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/api_server.py", line 680, in run_server
+(APIServer pid=51)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/api_server.py", line 694, in run_server_worker
+(APIServer pid=51)     async with build_async_engine_client(
+(APIServer pid=51)                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=51)     return await anext(self.gen)
+(APIServer pid=51)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/api_server.py", line 100, in build_async_engine_client
+(APIServer pid=51)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=51)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=51)     return await anext(self.gen)
+(APIServer pid=51)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/api_server.py", line 124, in build_async_engine_client_from_engine_args
+(APIServer pid=51)     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+(APIServer pid=51)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/engine/arg_utils.py", line 2023, in create_engine_config
+(APIServer pid=51)     config = VllmConfig(
+(APIServer pid=51)              ^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(APIServer pid=51)     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/config/vllm.py", line 1124, in __post_init__
+(APIServer pid=51)     self._set_compile_ranges()
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/config/vllm.py", line 1577, in _set_compile_ranges
+(APIServer pid=51)     max_size = compilation_config.pass_config.flashinfer_max_size(tp_size)
+(APIServer pid=51)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/config/compilation.py", line 192, in flashinfer_max_size
+(APIServer pid=51)     max_size_mb = self.default_fi_allreduce_fusion_max_size_mb().get(world_size)
+(APIServer pid=51)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/config/compilation.py", line 198, in default_fi_allreduce_fusion_max_size_mb
+(APIServer pid=51)     from vllm.compilation.passes.fusion.allreduce_rms_fusion import (
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/vllm/compilation/passes/fusion/allreduce_rms_fusion.py", line 45, in <module>
+(APIServer pid=51)     import flashinfer.comm as _flashinfer_comm
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/__init__.py", line 24, in <module>
+(APIServer pid=51)     from . import jit as jit
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/jit/__init__.py", line 22, in <module>
+(APIServer pid=51)     from . import cubin_loader
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/jit/cubin_loader.py", line 30, in <module>
+(APIServer pid=51)     from .core import logger
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/jit/core.py", line 14, in <module>
+(APIServer pid=51)     from . import env as jit_env
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/jit/env.py", line 127, in <module>
+(APIServer pid=51)     FLASHINFER_AOT_DIR: pathlib.Path = _get_aot_dir()
+(APIServer pid=51)                                        ^^^^^^^^^^^^^^
+(APIServer pid=51)   File "/usr/local/lib/python3.12/dist-packages/flashinfer/jit/env.py", line 114, in _get_aot_dir
+(APIServer pid=51)     raise RuntimeError(
+(APIServer pid=51) RuntimeError: flashinfer-jit-cache version (0.6.6+cu129) does not match flashinfer version (0.6.7). Please install the same version of both packages. Set FLASHINFER_DISABLE_VERSION_CHECK=1 to bypass this check.

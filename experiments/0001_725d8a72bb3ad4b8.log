@@ -1,0 +1,4 @@
+WARNING 04-14 12:01:04 [argparse_utils.py:191] With `vllm serve`, you should provide the model as a positional argument or in a config file instead of via the `--model` option. The `--model` option will be removed in a future version.
+usage: vllm [-h] [-v]
+            {chat,complete,serve,launch,bench,collect-env,run-batch} ...
+vllm: error: unrecognized arguments: --chat-template-kwargs {"enable_thinking": false} --disable-log-requests

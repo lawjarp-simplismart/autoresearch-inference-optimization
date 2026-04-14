@@ -1,28 +1,30 @@
 # =============================================================================
-# Inference Optimization Configuration
-# Do not modify during experiments — the agent edits serve.sh only.
-# Customize this per branch for each model/hardware combination.
+# Inference Optimization Configuration — Qwen3.5-9B on nebius1h100 (single H100)
+#
+# Target: maximize output throughput. TP=1, FP8 allowed, spec decoding allowed.
+# Benchmark: 4-corner sweep {conc=1,10} x {input=1k,10k}, output=500, no prefix
+# cache. Best config: FP8 + MTP num_spec=3 → 1095 tok/s avg (see serve.sh).
 # =============================================================================
 
 model:
-  name: ""          # e.g. "google/gemma-4-31B"
+  name: "Qwen/Qwen3.5-9B"
   revision: null
 
 remote:
-  ssh_host: ""      # e.g. "yottah100"
+  ssh_host: "nebius1h100"
   project_path: "~/autoresearch-inference-optimization"
 
 hardware:
-  gpu_type: ""      # e.g. "H100-80GB"
-  num_gpus: 8
-  max_tp: 8
+  gpu_type: "H100-80GB"
+  num_gpus: 1
+  max_tp: 1
 
 backends_to_try:
   - vllm
 
 server:
   health_endpoint: "http://localhost:8000/health"
-  health_timeout_sec: 300
+  health_timeout_sec: 600
   port: 8000
 
 optimization:
@@ -31,27 +33,38 @@ optimization:
   constraints:
     ttft_p99_ms: { max: 5000 }
     itl_p99_ms: { max: 1000 }
-    peak_memory_gb: { max: 600 }
+    # Full single H100 — our process owns the card
+    peak_memory_gb: { max: 78 }
 
 benchmark:
-  num_requests: 200
-  concurrency: 16
-  prompt_tokens: 1000
+  # Sweep: {1k, 10k} input x {1, 10} concurrency, output=500, NO prompt caching.
+  num_requests: 40
+  concurrency: [1, 10]
+  prompt_tokens: [1000, 10000]
   output_tokens: 500
+  prompt_cache_max_len: 0
+  prompt_randomize: true
 
 telegram:
   bot_token: ""
   chat_id: ""
 
 experiment:
-  timeout_sec: 900
+  timeout_sec: 1800
 
-# Parameter grid for `engine.py gaps` — agent explores untried values
-# Update this per model/hardware to reflect the actual search space
+# Parameter grid for `engine.py gaps` — single H100 80GB, TP=1
+# Constraints from user: bf16 only (no quantization, no kv-cache quant),
+# no speculative decoding. Everything else is fair game.
 search_space:
-  tensor_parallel_size: [1, 2, 4, 8]
-  quantization: [fp8, awq, gptq, null]
-  gpu_memory_utilization: [0.80, 0.85, 0.90, 0.95]
-  max_num_seqs: [64, 128, 256, 512]
+  tensor_parallel_size: [1]
+  dtype: [bfloat16]
+  gpu_memory_utilization: [0.85, 0.90, 0.92, 0.95]
+  max_num_seqs: [8, 16, 32, 64, 128, 256]
   enable_chunked_prefill: [true, false]
-  max_model_len: [4096, 8192, 16384]
+  max_num_batched_tokens: [2048, 4096, 8192, 16384, 32768]
+  max_model_len: [8192, 16384, 32768]
+  attention_backend: [FLASHINFER, FLASH_ATTN, TRITON_ATTN, XFORMERS]
+  language_model_only: [true, false]
+  num_scheduler_steps: [1, 8, 16]
+  enable_prefix_caching: [true]
+  compilation_level: [0, 3]
