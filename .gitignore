@@ -21,10 +21,8 @@ dev/
 # Results file
 results.tsv
 
-# Agent-generated (per-experiment, not worth tracking)
+# Agent working files (not worth tracking)
 experiment.yaml
-experiments.jsonl
-experiments/
 server.log
 run.log
 

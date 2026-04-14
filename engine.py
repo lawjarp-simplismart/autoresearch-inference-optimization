@@ -6,6 +6,7 @@ Usage: uv run engine.py {run,status,best,history,show,diff,gaps,check-gpus,kill-
 
 import argparse
 import asyncio
+import csv
 import hashlib
 import itertools
 import json
@@ -35,6 +36,7 @@ EXPERIMENT_YAML = BASE_DIR / "experiment.yaml"
 EXPERIMENTS_JSONL = BASE_DIR / "experiments.jsonl"
 EXPERIMENTS_DIR = BASE_DIR / "experiments"
 SERVER_LOG = BASE_DIR / "server.log"
+METRICS_DIR = EXPERIMENTS_DIR  # CSVs live alongside .sh and .log snapshots
 
 REMOTE_PATH_PREFIX = (
     'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.uv/bin:'
@@ -572,24 +574,58 @@ async def _run_benchmark_async(server_url, num_requests, concurrency, prompt_tok
         "throughput_total_tok_per_s": round((total_output + total_prompt) / wall_time, 2),
         "avg_latency_ms": round(sum(latencies) / len(latencies), 2),
         "median_latency_ms": round(_percentile(latencies, 50), 2),
+        "p90_latency_ms": round(_percentile(latencies, 90), 2),
+        "p95_latency_ms": round(_percentile(latencies, 95), 2),
         "p99_latency_ms": round(_percentile(latencies, 99), 2),
+        "min_latency_ms": round(latencies[0], 2),
+        "max_latency_ms": round(latencies[-1], 2),
         "avg_ttft_ms": round(sum(ttfts) / len(ttfts), 2),
         "median_ttft_ms": round(_percentile(ttfts, 50), 2),
+        "p90_ttft_ms": round(_percentile(ttfts, 90), 2),
+        "p95_ttft_ms": round(_percentile(ttfts, 95), 2),
         "p99_ttft_ms": round(_percentile(ttfts, 99), 2),
         "avg_tpot_ms": round(sum(tpots) / len(tpots), 2),
         "median_tpot_ms": round(_percentile(tpots, 50), 2),
+        "p90_tpot_ms": round(_percentile(tpots, 90), 2),
+        "p95_tpot_ms": round(_percentile(tpots, 95), 2),
         "p99_tpot_ms": round(_percentile(tpots, 99), 2),
     }
 
 
+def _augment_from_log(metrics):
+    """Extract server-side metrics from server.log (vllm/sglang both log these)."""
+    if not SERVER_LOG.exists():
+        return metrics
+    try:
+        log = SERVER_LOG.read_text(errors="ignore")[-200_000:]
+    except OSError:
+        return metrics
+    patterns = [
+        (r"Prefix cache hit rate:\s*([\d.]+)\s*%", "prefix_cache_hit_pct", float),
+        (r"Mean acceptance length:\s*([\d.]+)", "spec_accept_length", float),
+        (r"Avg Draft acceptance rate:\s*([\d.]+)\s*%", "spec_accept_rate_pct", float),
+    ]
+    for pat, key, cast in patterns:
+        matches = re.findall(pat, log)
+        if matches:
+            metrics[key] = cast(matches[-1])
+    return metrics
+
+
+def _map_metrics(raw):
+    return {METRIC_MAP.get(k, k): v for k, v in raw.items()}
+
+
 def run_benchmark(server_url, config):
-    """Run benchmark per user_config.yaml settings. Returns canonical metrics dict or None."""
+    """Run benchmark per user_config.yaml settings.
+    Returns (aggregated_metrics, per_combo_results) where per_combo_results is a list of dicts.
+    Returns (None, []) on total failure.
+    """
     bench_cfg = config.get("benchmark", {})
     num_requests = bench_cfg.get("num_requests", 200)
     temperature = bench_cfg.get("temperature", 0.0)
     request_rate = bench_cfg.get("request_rate")
     randomize = bench_cfg.get("prompt_randomize", True)
-    cache_max_len = bench_cfg.get("prompt_cache_max_len", 0)
 
     def ensure_list(val, default):
         if val is None:
@@ -599,64 +635,82 @@ def run_benchmark(server_url, config):
     concurrencies = ensure_list(bench_cfg.get("concurrency"), 32)
     prompt_tokens_list = ensure_list(bench_cfg.get("prompt_tokens"), 512)
     output_tokens_list = ensure_list(bench_cfg.get("output_tokens"), 128)
+    cache_max_lens = ensure_list(bench_cfg.get("prompt_cache_max_len"), 0)
 
-    combinations = list(itertools.product(concurrencies, prompt_tokens_list, output_tokens_list))
+    combinations = list(itertools.product(concurrencies, prompt_tokens_list, output_tokens_list, cache_max_lens))
     is_sweep = len(combinations) > 1
 
     all_results = []
-    for i, (conc, ptok, otok) in enumerate(combinations):
+    for i, (conc, ptok, otok, pcml) in enumerate(combinations):
         if is_sweep:
-            print(f"\n--- Sweep {i+1}/{len(combinations)}: concurrency={conc}, prompt_tokens={ptok}, output_tokens={otok} ---")
+            print(f"\n--- Sweep {i+1}/{len(combinations)}: concurrency={conc}, prompt_tokens={ptok}, output_tokens={otok}, cache_len={pcml} ---")
 
         raw = asyncio.run(_run_benchmark_async(
-            server_url, num_requests, conc, ptok, otok, temperature, request_rate, randomize, cache_max_len,
+            server_url, num_requests, conc, ptok, otok, temperature, request_rate, randomize, pcml,
         ))
         if raw is None:
             print(f"  Sweep point {i+1} failed", file=sys.stderr)
             continue
-        all_results.append(raw)
+        mapped = _map_metrics(raw)
+        mapped["prompt_cache_max_len"] = pcml
+        all_results.append(mapped)
 
     if not all_results:
-        return None
+        return None, []
 
-    # Apply metric name mapping
-    def map_metrics(raw):
-        return {METRIC_MAP.get(k, k): v for k, v in raw.items()}
-
-    # Augment with server-side metrics extracted from server.log (vllm/sglang both log these)
-    def augment_from_log(metrics):
-        if not SERVER_LOG.exists():
-            return metrics
-        try:
-            log = SERVER_LOG.read_text(errors="ignore")[-200_000:]  # tail last ~200KB
-        except OSError:
-            return metrics
-        import re
-        patterns = [
-            (r"Prefix cache hit rate:\s*([\d.]+)\s*%", "prefix_cache_hit_pct", float),
-            (r"Mean acceptance length:\s*([\d.]+)", "spec_accept_length", float),
-            (r"Avg Draft acceptance rate:\s*([\d.]+)\s*%", "spec_accept_rate_pct", float),
-        ]
-        for pat, key, cast in patterns:
-            matches = re.findall(pat, log)
-            if matches:
-                metrics[key] = cast(matches[-1])
-        return metrics
+    # Per-combo results (each is a full metrics dict, one per CSV row)
+    per_combo = [_augment_from_log(dict(r)) for r in all_results]
 
     if not is_sweep:
-        return augment_from_log(map_metrics(all_results[0]))
+        return per_combo[0], per_combo
 
-    # Sweep aggregation: avg throughput, worst-case latency
-    avg_throughput = sum(r["throughput_output_tok_per_s"] for r in all_results) / len(all_results)
-    worst_ttft_p99 = max(r["p99_ttft_ms"] for r in all_results)
-    worst_itl_p99 = max(r["p99_tpot_ms"] for r in all_results)
+    # Aggregated metrics for scoring: avg throughput, worst-case latency
+    avg_throughput = sum(r["throughput_tok_per_sec"] for r in per_combo) / len(per_combo)
+    worst_ttft_p99 = max(r.get("ttft_p99_ms", 0) for r in per_combo)
+    worst_itl_p99 = max(r.get("itl_p99_ms", 0) for r in per_combo)
 
-    metrics = map_metrics(all_results[0])  # base metrics from first run
-    metrics["throughput_tok_per_sec"] = round(avg_throughput, 2)
-    metrics["ttft_p99_ms"] = round(worst_ttft_p99, 2)
-    metrics["itl_p99_ms"] = round(worst_itl_p99, 2)
-    metrics["sweep_points"] = len(all_results)
-    return augment_from_log(metrics)
+    aggregated = dict(per_combo[0])
+    aggregated["throughput_tok_per_sec"] = round(avg_throughput, 2)
+    aggregated["ttft_p99_ms"] = round(worst_ttft_p99, 2)
+    aggregated["itl_p99_ms"] = round(worst_itl_p99, 2)
+    aggregated["sweep_points"] = len(per_combo)
+    return _augment_from_log(aggregated), per_combo
+
+
+# -- CSV Metrics --------------------------------------------------------------
+
+# Canonical column order for per-experiment metrics CSV
+METRICS_CSV_COLUMNS = [
+    # sweep point identity
+    "concurrency", "prompt_tokens_avg", "output_tokens_avg", "prompt_cache_max_len",
+    # counts
+    "num_requests", "successful", "failed", "wall_time_s",
+    "total_output_tokens", "total_prompt_tokens",
+    # throughput
+    "throughput_req_per_sec", "throughput_tok_per_sec", "throughput_total_tok_per_s",
+    # latency
+    "avg_latency_ms", "median_latency_ms", "p90_latency_ms", "p95_latency_ms", "p99_latency_ms",
+    "min_latency_ms", "max_latency_ms",
+    # ttft
+    "avg_ttft_ms", "ttft_p50_ms", "p90_ttft_ms", "p95_ttft_ms", "ttft_p99_ms",
+    # tpot / itl
+    "avg_tpot_ms", "itl_p50_ms", "p90_tpot_ms", "p95_tpot_ms", "itl_p99_ms",
+    # resource
+    "peak_memory_gb", "startup_sec",
+    # server-side
+    "prefix_cache_hit_pct", "spec_accept_length", "spec_accept_rate_pct",
+]
+
+
+def save_metrics_csv(experiment_num, config_hash, per_combo_results):
+    """Write one CSV per experiment: experiments/{num}_{hash}.csv with one row per sweep combo."""
+    EXPERIMENTS_DIR.mkdir(exist_ok=True)
+    csv_path = EXPERIMENTS_DIR / f"{experiment_num:04d}_{config_hash}.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=METRICS_CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for metrics in per_combo_results:
+            writer.writerow(metrics)
 
 
 # -- Scoring ------------------------------------------------------------------
@@ -833,13 +887,15 @@ def cmd_run(args):
     # Benchmark
     print("Running benchmark...")
     try:
-        metrics = run_benchmark(f"http://localhost:{port}", config)
+        metrics, per_combo = run_benchmark(f"http://localhost:{port}", config)
     except Exception as e:
         print(f"Benchmark error: {e}", file=sys.stderr)
-        metrics = None
+        metrics, per_combo = None, []
 
     stop_server(proc, port)
     wait_for_port_free(port)
+
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     if metrics is None:
         save_snapshot(num, config_hash)
@@ -848,25 +904,35 @@ def cmd_run(args):
             "description": exp_yaml["description"] or f"benchmark failed ({backend})",
             "tags": exp_yaml["tags"], "params": exp_yaml["params"],
             "metrics": {}, "backend": backend,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "timestamp": timestamp,
         })
         print("status: benchmark_failed")
         sys.exit(1)
 
-    metrics["peak_memory_gb"] = get_peak_gpu_memory()
+    peak_mem = get_peak_gpu_memory()
+    metrics["peak_memory_gb"] = peak_mem
     metrics["startup_sec"] = round(startup_time, 1)
+    # Add peak_memory and startup to each per-combo result too
+    for r in per_combo:
+        r["peak_memory_gb"] = peak_mem
+        r["startup_sec"] = round(startup_time, 1)
+
     score = compute_score(metrics, config)
     status = "ok" if score is not None else "constraint_violated"
 
     save_snapshot(num, config_hash)
+    description = exp_yaml["description"] or f"{backend} {config_hash}"
     entry = {
         "num": num, "hash": config_hash, "status": status, "score": score,
-        "description": exp_yaml["description"] or f"{backend} {config_hash}",
+        "description": description,
         "tags": exp_yaml["tags"], "params": exp_yaml["params"],
         "metrics": metrics, "backend": backend,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "timestamp": timestamp,
     }
     append_experiment(entry)
+
+    # Write per-experiment CSV with one row per sweep combo
+    save_metrics_csv(num, config_hash, per_combo)
 
     # Print results
     print("---")
@@ -877,6 +943,8 @@ def cmd_run(args):
     print(f"{'status:':30s}{status}")
     print(f"{'experiment_num:':30s}{num}")
     print(f"{'elapsed_sec:':30s}{time.time() - t_start:.1f}")
+    if len(per_combo) > 1:
+        print(f"{'sweep_combos:':30s}{len(per_combo)} (see metrics.csv)")
 
     notify_telegram(config, num, backend, status, score, metrics)
 
