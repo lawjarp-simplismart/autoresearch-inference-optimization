@@ -36,7 +36,6 @@ EXPERIMENT_YAML = BASE_DIR / "experiment.yaml"
 EXPERIMENTS_JSONL = BASE_DIR / "experiments.jsonl"
 EXPERIMENTS_DIR = BASE_DIR / "experiments"
 SERVER_LOG = BASE_DIR / "server.log"
-METRICS_DIR = EXPERIMENTS_DIR  # CSVs live alongside .sh and .log snapshots
 
 REMOTE_PATH_PREFIX = (
     'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.uv/bin:'
@@ -201,25 +200,21 @@ def stop_server(proc, port=None):
         subprocess.run(["bash", "-c", f"fuser -k {port}/tcp"], capture_output=True, timeout=10)
 
 
-def wait_for_port_free(port, timeout=30):
-    start = time.time()
-    while time.time() - start < timeout:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if s.connect_ex(("localhost", port)) != 0:
-                return True
-        finally:
-            s.close()
-        time.sleep(1)
-    return False
-
-
 def is_port_in_use(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         return s.connect_ex(("localhost", port)) == 0
     finally:
         s.close()
+
+
+def wait_for_port_free(port, timeout=30):
+    start = time.time()
+    while time.time() - start < timeout:
+        if not is_port_in_use(port):
+            return True
+        time.sleep(1)
+    return False
 
 
 def find_free_port(start_port, max_attempts=20):
@@ -237,13 +232,11 @@ def get_required_gpus():
     """Parse GPU indices from serve.sh (supports CUDA_VISIBLE_DEVICES and docker --gpus)."""
     try:
         content = SERVE_SCRIPT.read_text()
-        # Check CUDA_VISIBLE_DEVICES
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("export CUDA_VISIBLE_DEVICES=") or line.startswith("CUDA_VISIBLE_DEVICES="):
                 val = line.split("=", 1)[1].strip().strip('"').strip("'")
                 return set(val.split(","))
-        # Check docker --gpus 'device=X,Y' or '"device=X,Y"'
         m = re.search(r'device=([0-9,]+)', content)
         if m:
             return set(m.group(1).split(","))
@@ -252,33 +245,44 @@ def get_required_gpus():
     return None
 
 
-def check_gpu_availability():
+def _query_gpus(*fields):
+    """Query nvidia-smi for given fields, filtered to required GPUs. Returns list of tuples."""
+    required = get_required_gpus()
     try:
-        required = get_required_gpus()
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,memory.used,memory.total,utilization.gpu",
-             "--format=csv,noheader,nounits"],
+            ["nvidia-smi", f"--query-gpu=index,{','.join(fields)}", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
         if not out:
-            return True, "nvidia-smi returned no data"
-
-        busy_gpus = []
+            return []
+        results = []
         for line in out.split("\n"):
             parts = [x.strip() for x in line.split(",")]
-            if len(parts) >= 4:
-                idx, mem_used, mem_total, util = parts[0], float(parts[1]), float(parts[2]), float(parts[3])
-                if required and idx not in required:
-                    continue
-                if mem_used / mem_total > 0.20 or util > 10:
-                    busy_gpus.append(f"GPU {idx}: {mem_used:.0f}/{mem_total:.0f} MiB, {util:.0f}% util")
+            if len(parts) < 1 + len(fields):
+                continue
+            idx = parts[0]
+            if required and idx not in required:
+                continue
+            results.append(tuple(parts))
+        return results
+    except Exception:
+        return []
 
-        if busy_gpus:
-            return False, f"{len(busy_gpus)} GPU(s) in use:\n" + "\n".join(busy_gpus)
-        checked = f" (checking GPUs {','.join(sorted(required))})" if required else ""
-        return True, f"All required GPUs available{checked}"
-    except Exception as e:
-        return True, f"Could not check GPUs: {e}"
+
+def check_gpu_availability():
+    rows = _query_gpus("memory.used", "memory.total", "utilization.gpu")
+    if not rows:
+        return True, "nvidia-smi returned no data"
+    busy_gpus = []
+    for idx, mem_used, mem_total, util in rows:
+        mu, mt, u = float(mem_used), float(mem_total), float(util)
+        if mu / mt > 0.20 or u > 10:
+            busy_gpus.append(f"GPU {idx}: {mu:.0f}/{mt:.0f} MiB, {u:.0f}% util")
+    if busy_gpus:
+        return False, f"{len(busy_gpus)} GPU(s) in use:\n" + "\n".join(busy_gpus)
+    required = get_required_gpus()
+    checked = f" (checking GPUs {','.join(sorted(required))})" if required else ""
+    return True, f"All required GPUs available{checked}"
 
 
 def check_disk_space(min_gb=50):
@@ -325,25 +329,9 @@ def wait_for_gpus(timeout=300, interval=30):
 
 def get_peak_gpu_memory():
     """Get peak GPU memory in GB. Only counts GPUs used by serve.sh."""
-    try:
-        required = get_required_gpus()
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-        total = 0.0
-        for line in out.split("\n"):
-            if not line.strip():
-                continue
-            parts = [x.strip() for x in line.split(",")]
-            if len(parts) >= 2:
-                idx, mem = parts[0], float(parts[1])
-                if required and idx not in required:
-                    continue
-                total += mem
-        return total / 1024.0 if total else 0.0
-    except Exception:
-        return 0.0
+    rows = _query_gpus("memory.used")
+    total = sum(float(mem) for _, mem in rows)
+    return total / 1024.0 if total else 0.0
 
 
 # -- Benchmark Core -----------------------------------------------------------
@@ -373,7 +361,14 @@ PROMPTS = [
 
 PROMPT_PREFIX_TOKEN = "Pad "
 
-_tokenizer = tiktoken.encoding_for_model("gpt-4")
+_tokenizer = None
+
+
+def _get_tokenizer():
+    global _tokenizer
+    if _tokenizer is None:
+        _tokenizer = tiktoken.encoding_for_model("gpt-4")
+    return _tokenizer
 
 
 @dataclass
@@ -390,7 +385,7 @@ class RequestResult:
 
 def build_prompt(prompt_tokens, randomize=True, cache_max_len=0):
     suffix = random.choice(PROMPTS)
-    suffix_tokens = len(_tokenizer.encode(suffix))
+    suffix_tokens = len(_get_tokenizer().encode(suffix))
     pad_count = max(0, prompt_tokens - suffix_tokens)
     if randomize:
         cache_tokens = min(cache_max_len, pad_count)
@@ -432,7 +427,7 @@ async def _send_request(
     prompt_tokens, max_tokens, temperature, randomize, cache_max_len,
 ):
     prompt = build_prompt(prompt_tokens, randomize, cache_max_len)
-    prompt_tok_count = len(_tokenizer.encode(prompt))
+    prompt_tok_count = len(_get_tokenizer().encode(prompt))
     payload = _format_payload(model, prompt, max_tokens, stream=True, temperature=temperature)
     url = base_url.rstrip("/") + "/chat/completions"
 
@@ -478,7 +473,7 @@ async def _send_request(
                 if t_first_token is None:
                     t_first_token = t_end
 
-                output_tok_count = usage_comp_tokens or len(_tokenizer.encode(combined_text, allowed_special="all"))
+                output_tok_count = usage_comp_tokens or len(_get_tokenizer().encode(combined_text, allowed_special="all"))
 
                 return RequestResult(
                     request_id=request_id,
@@ -576,8 +571,8 @@ async def _run_benchmark_async(server_url, num_requests, concurrency, prompt_tok
         "successful": len(ok_results),
         "failed": fail_count,
         "wall_time_s": round(wall_time, 2),
-        "prompt_tokens_avg": round(sum(prompt_toks) / len(prompt_toks)),
-        "output_tokens_avg": round(sum(output_toks) / len(output_toks)),
+        "prompt_tokens_avg": round(total_prompt / len(prompt_toks)),
+        "output_tokens_avg": round(total_output / len(output_toks)),
         "total_output_tokens": total_output,
         "total_prompt_tokens": total_prompt,
         "throughput_req_per_s": round(len(ok_results) / wall_time, 2),
@@ -804,6 +799,14 @@ def hash_file(path):
         return hashlib.sha256(f.read()).hexdigest()[:16]
 
 
+def _make_entry(num, config_hash, backend, status, score, description, exp_yaml, metrics, timestamp):
+    return {
+        "num": num, "hash": config_hash, "status": status, "score": score,
+        "description": description, "tags": exp_yaml["tags"], "params": exp_yaml["params"],
+        "metrics": metrics, "backend": backend, "timestamp": timestamp,
+    }
+
+
 def save_snapshot(num, config_hash):
     """Save serve.sh and server.log snapshots."""
     EXPERIMENTS_DIR.mkdir(exist_ok=True)
@@ -904,14 +907,10 @@ def cmd_run(args):
         else:
             ready = False
         if not ready:
+            ts = time.strftime("%Y-%m-%dT%H:%M:%S")
             save_snapshot(num, config_hash)
-            append_experiment({
-                "num": num, "hash": config_hash, "status": "server_failed", "score": None,
-                "description": exp_yaml["description"] or f"server failed ({backend})",
-                "tags": exp_yaml["tags"], "params": exp_yaml["params"],
-                "metrics": {}, "backend": backend,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            append_experiment(_make_entry(num, config_hash, backend, "server_failed", None,
+                              exp_yaml["description"] or f"server failed ({backend})", exp_yaml, {}, ts))
             print("status: server_failed")
             stop_server(proc, port)
             wait_for_port_free(port)
@@ -935,13 +934,8 @@ def cmd_run(args):
 
     if metrics is None:
         save_snapshot(num, config_hash)
-        append_experiment({
-            "num": num, "hash": config_hash, "status": "benchmark_failed", "score": None,
-            "description": exp_yaml["description"] or f"benchmark failed ({backend})",
-            "tags": exp_yaml["tags"], "params": exp_yaml["params"],
-            "metrics": {}, "backend": backend,
-            "timestamp": timestamp,
-        })
+        append_experiment(_make_entry(num, config_hash, backend, "benchmark_failed", None,
+                          exp_yaml["description"] or f"benchmark failed ({backend})", exp_yaml, {}, timestamp))
         print("status: benchmark_failed")
         sys.exit(1)
 
@@ -958,14 +952,8 @@ def cmd_run(args):
 
     save_snapshot(num, config_hash)
     description = exp_yaml["description"] or f"{backend} {config_hash}"
-    entry = {
-        "num": num, "hash": config_hash, "status": status, "score": score,
-        "description": description,
-        "tags": exp_yaml["tags"], "params": exp_yaml["params"],
-        "metrics": metrics, "backend": backend,
-        "timestamp": timestamp,
-    }
-    append_experiment(entry)
+    append_experiment(_make_entry(num, config_hash, backend, status, score, description,
+                                  exp_yaml, metrics, timestamp))
 
     # Write per-experiment CSV with one row per sweep combo
     save_metrics_csv(num, config_hash, per_combo)
@@ -1138,19 +1126,11 @@ def cmd_gaps(args):
 def cmd_check_gpus(args):
     ok, msg = check_gpu_availability()
     print(msg)
-    # Also print raw GPU info
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.total,utilization.gpu",
-             "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-        if out:
-            print("\nGPU details:")
-            for line in out.split("\n"):
-                print(f"  {line.strip()}")
-    except Exception:
-        pass
+    rows = _query_gpus("name", "memory.used", "memory.total", "utilization.gpu")
+    if rows:
+        print("\nGPU details:")
+        for row in rows:
+            print(f"  GPU {row[0]}: {row[1]}, {row[2]}/{row[3]} MiB, {row[4]}% util")
 
 
 # -- Subcommand: kill-server --------------------------------------------------
@@ -1285,8 +1265,7 @@ def cmd_remote(args):
         else:
             print(f"[remote] Timeout after {args.timeout}s. Server may still be running on remote.")
             exit_code = 124
-        # Always fetch the log + experiments, success or fail
-        _ssh_run(host, f"cat {log_path}", capture=True, timeout=60)
+        # Fetch the log + experiments
         subprocess.run(["rsync", "-az", f"{host}:{log_path}", str(BASE_DIR / 'run.log')], check=False)
         _remote_fetch_experiments(config)
         return exit_code
