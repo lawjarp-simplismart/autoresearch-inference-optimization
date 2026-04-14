@@ -72,8 +72,36 @@ LOOP FOREVER:
 5. **Edit experiment.yaml**: Describe what you're trying (params + description)
 6. **Run**: `uv run engine.py run` (or `remote run` for remote machines)
 7. **Read output**: Score and metrics are printed. Check for constraint violations.
-8. **Compare**: `uv run engine.py compare <prev_best> <new>` to see what changed
-9. **Go to 1**
+8. **Analyze CSVs**: Check `experiments/{num}_{hash}.csv` for per-combo breakdown
+9. **Compare**: `uv run engine.py compare <prev_best> <new>` to see what changed
+10. **Go to 1**
+
+## How Results Are Stored
+
+Each experiment produces these files in `experiments/`:
+
+- `{num}_{hash}.sh` -- exact serve.sh used (the docker/server command)
+- `{num}_{hash}.log` -- full server log (startup, model loading, cache stats)
+- `{num}_{hash}.csv` -- metrics CSV with one row per sweep combo
+
+Plus:
+- `experiments.jsonl` -- one-line JSON per experiment (summary with aggregated score)
+
+### Benchmark Sweeps
+
+The benchmark runs every combination defined in `user_config.yaml`:
+```yaml
+benchmark:
+  concurrency: [1, 8, 16]
+  prompt_tokens: [1000, 10000]
+  output_tokens: [500]
+  prompt_cache_max_len: [0, 800]
+```
+This creates 3x2x1x2 = 12 combos, all against the same loaded server.
+Each combo gets its own row in the per-experiment CSV.
+
+The score comes from `optimization.scoring_combo` if set (e.g. only score on
+concurrency=8, prompt_tokens=1000), otherwise from aggregated metrics.
 
 ## Optimization Strategy
 
@@ -97,6 +125,7 @@ names like `vllm-exp-${PORT}` so engine.py can clean them up.
 ### Scoring
 - **Primary metric**: defined in `user_config.yaml` optimization.primary_metric
 - **Constraints**: defined in user_config.yaml optimization.constraints
+- **Scoring combo**: if set, score from one specific sweep combo only
 - Violating any constraint = score `failed`
 - Extra metrics from server logs (prefix cache hit rate, spec accept rate) are
   auto-extracted -- check them in experiment output
@@ -107,6 +136,7 @@ names like `vllm-exp-${PORT}` so engine.py can clean them up.
 - If a change causes server failure: check logs (`experiments/{num}_{hash}.log`)
 - Explore high-impact params first (tp, quantization), then fine-tune
 - Use `compare` to quantify the impact of each change
+- Read CSVs for detailed per-combo analysis when sweeping
 
 ## NEVER STOP
 

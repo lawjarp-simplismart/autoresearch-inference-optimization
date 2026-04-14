@@ -324,13 +324,24 @@ def wait_for_gpus(timeout=300, interval=30):
 
 
 def get_peak_gpu_memory():
+    """Get peak GPU memory in GB. Only counts GPUs used by serve.sh."""
     try:
+        required = get_required_gpus()
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
-        vals = [float(x) for x in out.split("\n") if x.strip()]
-        return sum(vals) / 1024.0 if vals else 0.0
+        total = 0.0
+        for line in out.split("\n"):
+            if not line.strip():
+                continue
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) >= 2:
+                idx, mem = parts[0], float(parts[1])
+                if required and idx not in required:
+                    continue
+                total += mem
+        return total / 1024.0 if total else 0.0
     except Exception:
         return 0.0
 
@@ -652,6 +663,9 @@ def run_benchmark(server_url, config):
             print(f"  Sweep point {i+1} failed", file=sys.stderr)
             continue
         mapped = _map_metrics(raw)
+        mapped["requested_concurrency"] = conc
+        mapped["requested_prompt_tokens"] = ptok
+        mapped["requested_output_tokens"] = otok
         mapped["prompt_cache_max_len"] = pcml
         all_results.append(mapped)
 
@@ -681,8 +695,10 @@ def run_benchmark(server_url, config):
 
 # Canonical column order for per-experiment metrics CSV
 METRICS_CSV_COLUMNS = [
-    # sweep point identity
-    "concurrency", "prompt_tokens_avg", "output_tokens_avg", "prompt_cache_max_len",
+    # sweep point identity (requested values)
+    "requested_concurrency", "requested_prompt_tokens", "requested_output_tokens", "prompt_cache_max_len",
+    # measured values
+    "concurrency", "prompt_tokens_avg", "output_tokens_avg",
     # counts
     "num_requests", "successful", "failed", "wall_time_s",
     "total_output_tokens", "total_prompt_tokens",
@@ -716,18 +732,38 @@ def save_metrics_csv(experiment_num, config_hash, per_combo_results):
 # -- Scoring ------------------------------------------------------------------
 
 
-def compute_score(metrics, config):
+def compute_score(metrics, config, per_combo=None):
+    """Compute score from metrics. If scoring_combo is set and per_combo results exist,
+    score from the matching combo instead of aggregated metrics."""
     opt = config["optimization"]
+    scoring_metrics = metrics
+
+    # If scoring_combo is defined, find the matching combo from per_combo results
+    scoring_combo = opt.get("scoring_combo")
+    if scoring_combo and per_combo:
+        for combo in per_combo:
+            match = all(
+                combo.get(k) == v or combo.get(f"requested_{k}") == v
+                for k, v in scoring_combo.items()
+            )
+            if match:
+                scoring_metrics = combo
+                break
+        else:
+            print(f"WARNING: scoring_combo {scoring_combo} not found in sweep results, using aggregated")
+
     for name, bounds in opt.get("constraints", {}).items():
-        val = metrics.get(name)
+        val = scoring_metrics.get(name)
         if val is None:
-            return None
+            continue  # skip constraints for metrics not present
         if "max" in bounds and val > bounds["max"]:
             return None
         if "min" in bounds and val < bounds["min"]:
             return None
-    primary = metrics.get(opt["primary_metric"])
+    primary = scoring_metrics.get(opt["primary_metric"])
     if primary is None:
+        print(f"WARNING: primary_metric '{opt['primary_metric']}' not found in metrics. "
+              f"Available: {sorted(scoring_metrics.keys())}")
         return None
     return -primary if opt["direction"] == "minimize" else primary
 
@@ -917,7 +953,7 @@ def cmd_run(args):
         r["peak_memory_gb"] = peak_mem
         r["startup_sec"] = round(startup_time, 1)
 
-    score = compute_score(metrics, config)
+    score = compute_score(metrics, config, per_combo)
     status = "ok" if score is not None else "constraint_violated"
 
     save_snapshot(num, config_hash)
@@ -1167,8 +1203,7 @@ def _remote_sync(config):
     excludes = [
         ".git", "__pycache__", "*.pyc", ".venv", "worktrees/",
         "node_modules/", ".env", "*.egg-info", "dev/",
-        "server.log", "run.log", "progress.png", "experiments/",
-        "experiments.jsonl",
+        "server.log", "run.log", "progress.png",
     ]
     exclude_args = []
     for e in excludes:

@@ -6,7 +6,6 @@
 
 model:
   name: ""          # e.g. "google/gemma-4-31B"
-  revision: null
 
 remote:
   ssh_host: ""      # e.g. "yottah100"
@@ -32,6 +31,10 @@ optimization:
     ttft_p99_ms: { max: 5000 }
     itl_p99_ms: { max: 1000 }
     peak_memory_gb: { max: 600 }
+  # scoring_combo: score from this specific sweep combo (optional, uses aggregated if unset)
+  # scoring_combo:
+  #   concurrency: 8
+  #   prompt_tokens: 1000
 
 benchmark:
   num_requests: 200
