@@ -504,7 +504,8 @@ def _percentile(sorted_data, p):
 
 
 async def _run_benchmark_async(server_url, num_requests, concurrency, prompt_tokens,
-                                max_tokens, temperature, request_rate, randomize, cache_max_len):
+                                max_tokens, temperature, request_rate, randomize, cache_max_len,
+                                warmup_requests=0):
     """Run one benchmark pass. Returns dict of metrics or None."""
     base_url = server_url.rstrip("/") + "/v1"
     headers = {"Content-Type": "application/json"}
@@ -516,12 +517,26 @@ async def _run_benchmark_async(server_url, num_requests, concurrency, prompt_tok
             model = data["data"][0]["id"]
     print(f"  Model: {model}, requests: {num_requests}, concurrency: {concurrency}")
 
+    # Floor warmup at concurrency so the pipeline is actually filled before timing.
+    effective_warmup = max(warmup_requests, concurrency) if warmup_requests > 0 else 0
+
     semaphore = asyncio.Semaphore(concurrency)
     connector = aiohttp.TCPConnector(limit=concurrency + 10)
     timeout = aiohttp.ClientTimeout(total=600)
     results = []
 
     async with aiohttp.ClientSession(headers=headers, connector=connector, timeout=timeout) as session:
+        if effective_warmup > 0:
+            print(f"  Warmup: {effective_warmup} requests (discarded)")
+            warmup_tasks = [
+                asyncio.create_task(_send_request(
+                    -1 - i, session, semaphore, base_url, model,
+                    prompt_tokens, max_tokens, temperature, randomize, cache_max_len,
+                ))
+                for i in range(effective_warmup)
+            ]
+            await asyncio.gather(*warmup_tasks, return_exceptions=True)
+
         bench_start = time.perf_counter()
         tasks = []
         for i in range(num_requests):
@@ -629,6 +644,7 @@ def run_benchmark(server_url, config):
     """
     bench_cfg = config.get("benchmark", {})
     num_requests = bench_cfg.get("num_requests", 200)
+    warmup_requests = bench_cfg.get("warmup_requests", 0)
     temperature = bench_cfg.get("temperature", 0.0)
     request_rate = bench_cfg.get("request_rate")
     randomize = bench_cfg.get("prompt_randomize", True)
@@ -653,6 +669,7 @@ def run_benchmark(server_url, config):
 
         raw = asyncio.run(_run_benchmark_async(
             server_url, num_requests, conc, ptok, otok, temperature, request_rate, randomize, pcml,
+            warmup_requests=warmup_requests,
         ))
         if raw is None:
             print(f"  Sweep point {i+1} failed", file=sys.stderr)

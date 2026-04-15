@@ -1,27 +1,28 @@
 # =============================================================================
 # Inference Optimization Configuration
 # Do not modify during experiments — the agent edits serve.sh only.
-# Customize this per branch for each model/hardware combination.
+# Branch: autoresearch/gemma4-26b-a4b-it-v2
+# Target: beat 157 tok/s at c=1, 10k prompt / 500 output (Artificial Analysis)
 # =============================================================================
 
 model:
-  name: ""          # e.g. "google/gemma-4-31B"
+  name: "google/gemma-4-26B-A4B-it"
 
 remote:
-  ssh_host: ""      # e.g. "yottah100"
-  project_path: "~/autoresearch-inference-optimization"
+  ssh_host: "nebius1h100"
+  project_path: "~/autoresearch-inference-optimization/gemma4-26b-a4b"
 
 hardware:
-  gpu_type: ""      # e.g. "H100-80GB"
-  num_gpus: 8
-  max_tp: 8
+  gpu_type: "H100-80GB"
+  num_gpus: 1
+  max_tp: 1
 
 backends_to_try:
   - vllm
 
 server:
   health_endpoint: "http://localhost:8000/health"
-  health_timeout_sec: 300
+  health_timeout_sec: 600
   port: 8000
 
 optimization:
@@ -30,31 +31,39 @@ optimization:
   constraints:
     ttft_p99_ms: { max: 5000 }
     itl_p99_ms: { max: 1000 }
-    peak_memory_gb: { max: 600 }
-  # scoring_combo: score from this specific sweep combo (optional, uses aggregated if unset)
-  # scoring_combo:
-  #   concurrency: 8
-  #   prompt_tokens: 1000
+    peak_memory_gb: { max: 80 }
+  # Score on single-stream decode speed at 10k prompt (matches Artificial Analysis)
+  scoring_combo:
+    concurrency: 1
+    prompt_tokens: 10000
 
 benchmark:
-  num_requests: 200
-  concurrency: 16
-  prompt_tokens: 1000
-  output_tokens: 500
+  num_requests: 50
+  warmup_requests: 3   # discarded before timing; floored at concurrency so pipeline fills
+  concurrency: [1, 8]
+  prompt_tokens: [1000, 10000]
+  output_tokens: [500]
+  prompt_cache_max_len: [0]
 
 telegram:
   bot_token: ""
   chat_id: ""
 
 experiment:
-  timeout_sec: 900
+  timeout_sec: 1800
 
-# Parameter grid for `engine.py gaps` — agent explores untried values
-# Update this per model/hardware to reflect the actual search space
+# Parameter grid for `engine.py gaps` — agent explores untried values.
+# TP=1 fixed (single H100), so no tensor_parallel_size axis.
 search_space:
-  tensor_parallel_size: [1, 2, 4, 8]
-  quantization: [fp8, awq, gptq, null]
-  gpu_memory_utilization: [0.80, 0.85, 0.90, 0.95]
-  max_num_seqs: [64, 128, 256, 512]
+  model_variant:
+    - "google/gemma-4-26B-A4B-it"
+    - "RedHatAI/gemma-4-26B-A4B-it-FP8-Dynamic"
+    - "protoLabsAI/gemma-4-26B-A4B-it-FP8"
+  quantization: [null, fp8]
+  kv_cache_dtype: [auto, fp8]
+  attention_backend: [FLASHINFER, FLASH_ATTN, TRITON_ATTN]
+  gpu_memory_utilization: [0.85, 0.90, 0.93, 0.95]
+  max_num_seqs: [32, 64, 128, 256]
   enable_chunked_prefill: [true, false]
-  max_model_len: [4096, 8192, 16384]
+  enable_prefix_caching: [true, false]
+  max_model_len: [12288, 16384, 32768]

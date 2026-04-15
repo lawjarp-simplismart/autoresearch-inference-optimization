@@ -1,0 +1,21 @@
+[36;1mArctic Inference plugin is enabled![0m
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/api_server.py", line 706, in <module>
+    parser = make_arg_parser(parser)
+  File "/usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/cli_args.py", line 349, in make_arg_parser
+    parser = AsyncEngineArgs.add_cli_args(parser)
+  File "/usr/local/lib/python3.10/dist-packages/vllm/engine/arg_utils.py", line 2262, in add_cli_args
+    load_general_plugins()
+  File "/usr/local/lib/python3.10/dist-packages/vllm/plugins/__init__.py", line 82, in load_general_plugins
+    func()
+  File "/usr/local/lib/python3.10/dist-packages/arctic_inference/vllm/plugin.py", line 44, in arctic_inference_plugin
+    from .patches import apply_arctic_patches
+  File "/usr/local/lib/python3.10/dist-packages/arctic_inference/vllm/patches.py", line 24, in <module>
+    from arctic_inference.vllm.args import EngineArgsPatch, AsyncEngineArgsPatch
+  File "/usr/local/lib/python3.10/dist-packages/arctic_inference/vllm/args.py", line 23, in <module>
+    from vllm.utils import FlexibleArgumentParser
+ImportError: cannot import name 'FlexibleArgumentParser' from 'vllm.utils' (/usr/local/lib/python3.10/dist-packages/vllm/utils/__init__.py)

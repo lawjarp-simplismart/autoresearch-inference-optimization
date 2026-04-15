@@ -2,14 +2,13 @@
 set -e
 
 # =============================================================================
-# Exp #25: sglang main + FP8 — stabilized re-run
-# Prior run (#24) had c=1/10k decode at 147-155 tok/s (vs vllm 135) but server
-# crashed transitioning to c=8 combo. Lower mem pressure + disable radix cache
-# to avoid cross-request KV buildup + cap cudagraph capture batch sizes.
+# Exp #12: FP8 on vllm/vllm-openai:latest (upstream vllm 0.19.0 w/ gemma4 support)
+# Base: exp #3 on vllm-openai:gemma4 fork = 135.63 tok/s.
+# Hypothesis: upstream has newer MoE/attention kernels and/or fused optimizations.
 # =============================================================================
 
 MODEL="google/gemma-4-26B-A4B-it"
-IMAGE="sglang-main:v4"
+IMAGE="vllm/vllm-openai:latest"
 CONTAINER_NAME="vllm-exp-${PORT:-8000}"
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -22,15 +21,11 @@ exec docker run --rm --name "$CONTAINER_NAME" \
     -e HF_TOKEN="${HF_TOKEN}" \
     -e HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}" \
     -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
-    --entrypoint python3 \
     "$IMAGE" \
-    -m sglang.launch_server \
-    --model-path "$MODEL" \
-    --tp 1 \
+    --model "$MODEL" \
+    --tensor-parallel-size 1 \
     --quantization fp8 \
-    --context-length 12288 \
-    --mem-fraction-static 0.85 \
-    --disable-radix-cache \
-    --cuda-graph-max-bs 16 \
-    --host 0.0.0.0 \
+    --max-model-len 12288 \
+    --gpu-memory-utilization 0.90 \
+    --limit-mm-per-prompt '{"image":0,"audio":0}' \
     --port "${PORT:-8000}"
