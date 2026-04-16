@@ -2,12 +2,11 @@
 set -e
 
 # =============================================================================
-# Exp #30: EAGLE3 with bf16 target (no FP8) — isolate quant drift
-# Base: exp #29 (205 tok/s @ 1k, 90 @ 10k — accept rate 14.8% only).
-# Hypothesis: speculator was trained on bf16 logits. FP8 quant may shift the
-# target distribution enough to drop accept rate. Drop --quantization fp8 and
-# see if accept rate recovers. bf16 target costs ~10 tok/s so accept needs to
-# improve a lot to net out positive at 10k.
+# Exp #29: EAGLE3 with RedHatAI draft on vllm/vllm-openai:nightly
+# Base: exp #15 (135.98). Prior #28 failed because vllm 0.19 (in Arctic image)
+# rejects eagle3 for gemma4 target. RedHat docs say eagle3+gemma4 is "supported
+# on vllm-main", so use today's nightly. num_speculative_tokens=3 per RedHat
+# example. Keep max-num-seqs=1 + FP8 from #15.
 # =============================================================================
 
 MODEL="google/gemma-4-26B-A4B-it"
@@ -30,6 +29,7 @@ exec docker run --rm --name "$CONTAINER_NAME" \
     "$IMAGE" \
     -c "pip install --quiet pandas && exec vllm serve '$MODEL' \
         --tensor-parallel-size 1 \
+        --quantization fp8 \
         --max-model-len 12288 \
         --gpu-memory-utilization 0.90 \
         --limit-mm-per-prompt '{\"image\":0,\"audio\":0}' \
